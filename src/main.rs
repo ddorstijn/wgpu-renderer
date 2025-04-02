@@ -9,6 +9,9 @@ use winit::{
 };
 
 mod app;
+mod camera;
+mod util;
+
 struct State {
     window: Arc<Window>,
     device: wgpu::Device,

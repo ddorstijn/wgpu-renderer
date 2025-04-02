@@ -1,35 +1,21 @@
+use bevy_math::Vec3;
 use nanorand::Rng;
 use wgpu::util::DeviceExt;
 
-fn load_glb(file_path: &str) -> (Vec<[f32; 3]>, Vec<u32>) {
-    // Open the .glb file
-    let (gltf, buffers, _) = gltf::import(file_path).expect("Failed to load GLB file");
-
-    gltf.meshes()
-        .flat_map(|mesh| {
-            mesh.primitives().flat_map(|primitive| {
-                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-                let positions = reader
-                    .read_positions()
-                    .map(|p| p.map(|v| [v[0], v[1], v[2]]))
-                    .into_iter()
-                    .flatten();
-                let indices = reader
-                    .read_indices()
-                    .map(|i| i.into_u32())
-                    .into_iter()
-                    .flatten();
-                positions.zip(indices).map(|(v, i)| (v, i))
-            })
-        })
-        .unzip()
-}
+use crate::{
+    camera::Camera,
+    util::{load_glb, load_obj},
+};
 
 pub struct App {
     num_particles: u32,
     frame_num: usize,
     last_update_time: std::time::Instant, // Track the last compute update time
     interpolation_factor: f32,
+
+    camera: Camera,
+    camera_bind_group: wgpu::BindGroup,
+    camera_buffer: wgpu::Buffer,
 
     particle_bind_groups: Vec<wgpu::BindGroup>,
     particle_buffers: Vec<wgpu::Buffer>,
@@ -45,6 +31,20 @@ impl App {
     pub fn new(state: &crate::State) -> Self {
         let num_particles = 1;
         let particles_per_group = 64;
+
+        let camera = Camera {
+            // position the camera 1 unit up and 2 units back
+            // +z is out of the screen
+            eye: (0.0, 2.0, 0.01).into(),
+            // have it look at the origin
+            target: (0.0, 0.0, 0.0).into(),
+            // which way is "up"
+            up: Vec3::Y,
+            aspect: state.size.width as f32 / state.size.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
 
         let compute_shader = state
             .device
@@ -124,14 +124,48 @@ impl App {
                     push_constant_ranges: &[],
                 });
 
-        // create render pipeline with empty bind group layout
+        let camera_buffer = state
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Camera Buffer"),
+                contents: bytemuck::cast_slice(
+                    &camera.build_view_projection_matrix().to_cols_array_2d(),
+                ),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let camera_bind_group_layout =
+            state
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                    label: Some("camera_bind_group_layout"),
+                });
+
+        let camera_bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+            label: Some("camera_bind_group"),
+        });
 
         let render_pipeline_layout =
             state
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("render"),
-                    bind_group_layouts: &[],
+                    bind_group_layouts: &[&camera_bind_group_layout],
                     push_constant_ranges: &[],
                 });
 
@@ -185,7 +219,7 @@ impl App {
                 });
 
         // buffer for the three 2d triangle vertices of each instance
-        let (vertices, indices) = load_glb("./src/meshes/Car.glb");
+        let (vertices, indices) = load_obj("./src/meshes/Car.obj");
         let vertex_buffer = state
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -205,13 +239,13 @@ impl App {
         // buffer for all particles data of type [(posx,posy,velx,vely),...]
 
         let mut initial_particle_data = vec![0.0f32; (4 * num_particles) as usize];
-        let mut rng = nanorand::WyRand::new_seed(42); // Seeded RNG
-        let mut unif = || rng.generate::<f32>() * 2f32 - 1f32; // Generate a num (-1, 1)
+        // let mut rng = nanorand::WyRand::new_seed(42); // Seeded RNG
+        // let mut unif = || rng.generate::<f32>() * 2f32 - 1f32; // Generate a num (-1, 1)
         for particle_instance_chunk in initial_particle_data.chunks_mut(4) {
-            particle_instance_chunk[0] = unif(); // posx
-            particle_instance_chunk[1] = unif(); // posy
-            particle_instance_chunk[2] = unif() * 0.1; // velx
-            particle_instance_chunk[3] = unif() * 0.1; // vely
+            particle_instance_chunk[0] = 0.0; // unif(); // posx
+            particle_instance_chunk[1] = 0.0; //unif(); // posy
+            particle_instance_chunk[2] = 0.0; //unif() * 0.1; // velx
+            particle_instance_chunk[3] = 1.0; //unif() * 0.1; // vely
         }
 
         // creates two buffers of particle data each of size num_particles
@@ -259,12 +293,14 @@ impl App {
         let work_group_count =
             ((num_particles as f32) / (particles_per_group as f32)).ceil() as u32;
 
-        // returns Example struct and No encoder commands
-
         Self {
             num_particles,
             last_update_time: std::time::Instant::now(),
             interpolation_factor: 0.0,
+
+            camera,
+            camera_bind_group,
+            camera_buffer,
 
             particle_bind_groups,
             particle_buffers,
@@ -309,6 +345,8 @@ impl App {
             rpass.set_pipeline(&self.render_pipeline);
             // render dst particles
             rpass.set_vertex_buffer(0, self.particle_buffers[(self.frame_num + 1) % 2].slice(..));
+            // set the camera bind group
+            rpass.set_bind_group(0, &self.camera_bind_group, &[]);
             // the three instance-local vertices
             rpass.set_vertex_buffer(1, self.vertex_buffer.slice(..));
             rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -318,7 +356,7 @@ impl App {
 
         let now = std::time::Instant::now();
         let delta_time = now.duration_since(self.last_update_time).as_secs_f32();
-        let fixed_update_interval = 1.0 / 60.0; // Fixed update interval (e.g., 60 Hz)
+        let fixed_update_interval = 1.0 / 60.0;
 
         if delta_time >= fixed_update_interval {
             self.last_update_time = now;
