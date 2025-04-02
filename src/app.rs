@@ -1,13 +1,41 @@
 use nanorand::Rng;
 use wgpu::util::DeviceExt;
 
+fn load_glb(file_path: &str) -> (Vec<[f32; 3]>, Vec<u32>) {
+    // Open the .glb file
+    let (gltf, buffers, _) = gltf::import(file_path).expect("Failed to load GLB file");
+
+    gltf.meshes()
+        .flat_map(|mesh| {
+            mesh.primitives().flat_map(|primitive| {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                let positions = reader
+                    .read_positions()
+                    .map(|p| p.map(|v| [v[0], v[1], v[2]]))
+                    .into_iter()
+                    .flatten();
+                let indices = reader
+                    .read_indices()
+                    .map(|i| i.into_u32())
+                    .into_iter()
+                    .flatten();
+                positions.zip(indices).map(|(v, i)| (v, i))
+            })
+        })
+        .unzip()
+}
+
 pub struct App {
     num_particles: u32,
     frame_num: usize,
+    last_update_time: std::time::Instant, // Track the last compute update time
+    interpolation_factor: f32,
 
     particle_bind_groups: Vec<wgpu::BindGroup>,
     particle_buffers: Vec<wgpu::Buffer>,
-    vertices_buffer: wgpu::Buffer,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
     compute_pipeline: wgpu::ComputePipeline,
     render_pipeline: wgpu::RenderPipeline,
     work_group_count: u32,
@@ -15,7 +43,7 @@ pub struct App {
 
 impl App {
     pub fn new(state: &crate::State) -> Self {
-        let num_particles = 1000;
+        let num_particles = 1;
         let particles_per_group = 64;
 
         let compute_shader = state
@@ -122,9 +150,9 @@ impl App {
                             attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
                         },
                         wgpu::VertexBufferLayout {
-                            array_stride: 2 * 4,
+                            array_stride: 3 * 4,
                             step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &wgpu::vertex_attr_array![2 => Float32x2],
+                            attributes: &wgpu::vertex_attr_array![2 => Float32x3],
                         },
                     ],
                 },
@@ -157,14 +185,21 @@ impl App {
                 });
 
         // buffer for the three 2d triangle vertices of each instance
-
-        let vertex_buffer_data = [-0.01f32, -0.02, 0.01, -0.02, 0.00, 0.02];
-        let vertices_buffer = state
+        let (vertices, indices) = load_glb("./src/meshes/Car.glb");
+        let vertex_buffer = state
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
-                contents: bytemuck::bytes_of(&vertex_buffer_data),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+        let index_buffer = state
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsages::INDEX,
             });
 
         // buffer for all particles data of type [(posx,posy,velx,vely),...]
@@ -228,9 +263,14 @@ impl App {
 
         Self {
             num_particles,
+            last_update_time: std::time::Instant::now(),
+            interpolation_factor: 0.0,
+
             particle_bind_groups,
             particle_buffers,
-            vertices_buffer,
+            vertex_buffer,
+            index_buffer,
+            index_count: indices.len() as u32,
             compute_pipeline,
             render_pipeline,
             work_group_count,
@@ -246,7 +286,7 @@ impl App {
             ops: wgpu::Operations {
                 // Not clearing here in order to test wgpu's zero texture initialization on a surface texture.
                 // Users should avoid loading uninitialized memory since this can cause additional overhead.
-                load: wgpu::LoadOp::Load,
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                 store: wgpu::StoreOp::Store,
             },
         })];
@@ -262,19 +302,6 @@ impl App {
         let mut command_encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        command_encoder.push_debug_group("compute boid movement");
-        {
-            // compute pass
-            let mut cpass = command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(0, &self.particle_bind_groups[self.frame_num % 2], &[]);
-            cpass.dispatch_workgroups(self.work_group_count, 1, 1);
-        }
-        command_encoder.pop_debug_group();
-
         command_encoder.push_debug_group("render boids");
         {
             // render pass
@@ -283,13 +310,37 @@ impl App {
             // render dst particles
             rpass.set_vertex_buffer(0, self.particle_buffers[(self.frame_num + 1) % 2].slice(..));
             // the three instance-local vertices
-            rpass.set_vertex_buffer(1, self.vertices_buffer.slice(..));
-            rpass.draw(0..3, 0..self.num_particles);
+            rpass.set_vertex_buffer(1, self.vertex_buffer.slice(..));
+            rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..self.index_count, 0, 0..self.num_particles);
         }
         command_encoder.pop_debug_group();
 
-        // update frame count
-        self.frame_num += 1;
+        let now = std::time::Instant::now();
+        let delta_time = now.duration_since(self.last_update_time).as_secs_f32();
+        let fixed_update_interval = 1.0 / 60.0; // Fixed update interval (e.g., 60 Hz)
+
+        if delta_time >= fixed_update_interval {
+            self.last_update_time = now;
+            command_encoder.push_debug_group("compute boid movement");
+            {
+                // compute pass
+                let mut cpass = command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&self.compute_pipeline);
+                cpass.set_bind_group(0, &self.particle_bind_groups[self.frame_num % 2], &[]);
+                cpass.dispatch_workgroups(self.work_group_count, 1, 1);
+            }
+            command_encoder.pop_debug_group();
+
+            // update frame count
+            self.frame_num += 1;
+        }
+
+        // Calculate interpolation factor (t)
+        self.interpolation_factor = (delta_time % fixed_update_interval) / fixed_update_interval;
 
         // done
         queue.submit(Some(command_encoder.finish()));
