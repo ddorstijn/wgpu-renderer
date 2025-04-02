@@ -10,6 +10,7 @@ use winit::{
 
 mod app;
 mod camera;
+mod model;
 mod util;
 
 struct State {
@@ -107,16 +108,13 @@ impl ApplicationHandler for Engine {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let state = self.state.as_mut().unwrap();
+        let app = self.app.as_mut().unwrap();
         match event {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                if self.app.is_none() {
-                    return;
-                }
-
                 // Create texture view
                 let surface_texture = state
                     .surface
@@ -132,10 +130,7 @@ impl ApplicationHandler for Engine {
                             ..Default::default()
                         });
 
-                self.app
-                    .as_mut()
-                    .unwrap()
-                    .render(&texture_view, &state.device, &state.queue);
+                app.render(&texture_view, &state.device, &state.queue);
 
                 // Submit the command in the queue to execute
                 state.get_window().pre_present_notify();
@@ -146,6 +141,7 @@ impl ApplicationHandler for Engine {
                 // Reconfigures the size of the surface. We do not re-render
                 // here as this event is always followed up by redraw request.
                 state.resize(size);
+                app.resize(state);
             }
             _ => (),
         }

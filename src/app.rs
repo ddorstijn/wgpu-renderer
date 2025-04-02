@@ -16,6 +16,7 @@ pub struct App {
     camera: Camera,
     camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
+    depth_texture: crate::texture::Texture,
 
     particle_bind_groups: Vec<wgpu::BindGroup>,
     particle_buffers: Vec<wgpu::Buffer>,
@@ -33,13 +34,9 @@ impl App {
         let particles_per_group = 64;
 
         let camera = Camera {
-            // position the camera 1 unit up and 2 units back
-            // +z is out of the screen
-            eye: (0.0, 2.0, 0.01).into(),
-            // have it look at the origin
+            eye: (-2.0, 0.0, 1.0).into(),
             target: (0.0, 0.0, 0.0).into(),
-            // which way is "up"
-            up: Vec3::Y,
+            up: Vec3::Z,
             aspect: state.size.width as f32 / state.size.height as f32,
             fovy: 45.0,
             znear: 0.1,
@@ -52,8 +49,6 @@ impl App {
         let draw_shader = state
             .device
             .create_shader_module(wgpu::include_wgsl!("shaders/draw.wgsl"));
-
-        // buffer for simulation parameters uniform
 
         let sim_param_data = [
             0.04f32, // deltaT
@@ -160,6 +155,12 @@ impl App {
             label: Some("camera_bind_group"),
         });
 
+        let depth_texture = crate::texture::Texture::create_depth_texture(
+            &state.device,
+            &state.size,
+            "depth_texture",
+        );
+
         let render_pipeline_layout =
             state
                 .device
@@ -197,14 +198,18 @@ impl App {
                     targets: &[Some(state.surface_format.into())],
                 }),
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: crate::texture::Texture::DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
                 cache: None,
             },
         );
-
-        // create compute pipeline
 
         let compute_pipeline =
             state
@@ -239,13 +244,13 @@ impl App {
         // buffer for all particles data of type [(posx,posy,velx,vely),...]
 
         let mut initial_particle_data = vec![0.0f32; (4 * num_particles) as usize];
-        // let mut rng = nanorand::WyRand::new_seed(42); // Seeded RNG
-        // let mut unif = || rng.generate::<f32>() * 2f32 - 1f32; // Generate a num (-1, 1)
+        let mut rng = nanorand::WyRand::new_seed(42); // Seeded RNG
+        let mut unif = || rng.generate::<f32>() * 2f32 - 1f32; // Generate a num (-1, 1)
         for particle_instance_chunk in initial_particle_data.chunks_mut(4) {
-            particle_instance_chunk[0] = 0.0; // unif(); // posx
-            particle_instance_chunk[1] = 0.0; //unif(); // posy
-            particle_instance_chunk[2] = 0.0; //unif() * 0.1; // velx
-            particle_instance_chunk[3] = 1.0; //unif() * 0.1; // vely
+            particle_instance_chunk[0] = unif(); // posx
+            particle_instance_chunk[1] = unif(); // posy
+            particle_instance_chunk[2] = unif() * 0.1; // velx
+            particle_instance_chunk[3] = unif() * 0.1; // vely
         }
 
         // creates two buffers of particle data each of size num_particles
@@ -301,6 +306,7 @@ impl App {
             camera,
             camera_bind_group,
             camera_buffer,
+            depth_texture,
 
             particle_bind_groups,
             particle_buffers,
@@ -329,7 +335,14 @@ impl App {
         let render_pass_descriptor = wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &color_attachments,
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_texture.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
         };
@@ -382,5 +395,13 @@ impl App {
 
         // done
         queue.submit(Some(command_encoder.finish()));
+    }
+
+    pub fn resize(&mut self, state: &crate::State) {
+        self.depth_texture = crate::texture::Texture::create_depth_texture(
+            &state.device,
+            &state.size,
+            "depth_texture",
+        );
     }
 }

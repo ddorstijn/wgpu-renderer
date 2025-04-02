@@ -6,7 +6,7 @@ var<uniform> camera: CameraUniform;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>, // Clip-space position
-    @location(0) height: f32,                   // Pass height to the fragment shader
+    @location(1) world_position: vec3<f32>,     // Custom output for world position
 };
 
 @vertex
@@ -15,23 +15,30 @@ fn main_vs(
     @location(1) particle_vel: vec2<f32>,
     @location(2) position: vec3<f32>,
 ) -> VertexOutput {
-    // let angle = -atan2(particle_vel.x, particle_vel.y);
-    // let pos = vec2<f32>(
-    //     position.x * cos(angle) - position.z * sin(angle),
-    //     position.x * sin(angle) + position.z * cos(angle),
-    // );
+    let angle = -atan2(particle_vel.x, particle_vel.y);
+    let pos = vec2<f32>(
+        position.x * cos(angle) - position.y * sin(angle),
+        position.x * sin(angle) + position.y * cos(angle),
+    );
+
+    let world_pos = vec3<f32>(pos + particle_pos, position.z);
 
     var output: VertexOutput;
-    output.clip_position = camera.view_proj * vec4<f32>(position + vec3<f32>(particle_pos.x, 0.0, particle_pos.y), 1.0);
-    output.height = position.y * 0.1;
+    output.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    output.world_position = vec3<f32>(pos + particle_pos, position.z);
+
     return output;
 }
 
 @fragment
 fn main_fs(
-    @location(0) height: f32, // Receive the height from the vertex shader
+    @location(1) world_position: vec3<f32>, // Receive world position
 ) -> @location(0) vec4<f32> {
-    // Map the height to a color gradient (e.g., blue for low, red for high)
-    let color = vec3<f32>(height, 0.0, 0.01);
+    // Use the world position for color calculations
+    let red = world_position.x * 0.5 + 0.5;
+    let green = world_position.y * 0.5 + 0.5;
+    let blue = world_position.z * 1.5;
+
+    let color = vec3<f32>(red, green, blue);
     return vec4<f32>(color, 1.0); // Return the color with full opacity
 }
