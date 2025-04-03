@@ -13,6 +13,8 @@ mod camera;
 mod model;
 mod util;
 
+mod particle_compute;
+
 struct State {
     window: Arc<Window>,
     device: wgpu::Device,

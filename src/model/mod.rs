@@ -8,7 +8,7 @@ pub mod texture;
 pub struct Model {
     pub name: String,
     pub mesh: Mesh,
-    pub material: Material,
+    // pub material: Material,
 }
 
 impl Model {
@@ -17,12 +17,12 @@ impl Model {
         queue: &wgpu::Queue,
         name: String,
         mesh: Mesh,
-        material: Material,
+        // material: Material,
     ) -> Self {
         Self {
             name,
             mesh,
-            material,
+            // material,
         }
     }
 
@@ -32,7 +32,8 @@ impl Model {
         bytes: &[u8],
         label: &str,
     ) -> Result<Self> {
-        let model = ModelLoader::load_model(bytes)?;
-        Ok(model)
+        // let model = ModelLoader::load_model(bytes)?;
+        // Ok(model)
+        todo!()
     }
 }
