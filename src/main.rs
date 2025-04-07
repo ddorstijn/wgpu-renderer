@@ -11,7 +11,7 @@ use winit::{
 mod app;
 mod camera;
 mod model;
-mod util;
+mod texture;
 
 mod particle_compute;
 

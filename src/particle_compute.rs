@@ -5,20 +5,31 @@ use crate::State;
 
 pub struct ParticleCompute {
     pub compute_pipeline: wgpu::ComputePipeline,
-    pub bind_group: wgpu::BindGroup,
     pub work_group_count: u32,
     pub particle_buffers: Vec<wgpu::Buffer>,
     pub particle_bind_groups: Vec<wgpu::BindGroup>,
 
-    frame_num: usize,
+    buffer_index: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SimParams {
+    pub delta_t: f32,
+    pub rule1_distance: f32,
+    pub rule2_distance: f32,
+    pub rule3_distance: f32,
+    pub rule1_scale: f32,
+    pub rule2_scale: f32,
+    pub rule3_scale: f32,
 }
 
 impl ParticleCompute {
     pub fn new(
         state: &State,
+        simulation_parameters: &SimParams,
         num_particles: u32,
         particles_per_group: u32,
-        sim_param_data: &[f32],
     ) -> Self {
         let compute_shader = state
             .device
@@ -28,12 +39,11 @@ impl ParticleCompute {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Simulation Parameter Buffer"),
-                contents: bytemuck::cast_slice(&sim_param_data),
+                contents: bytemuck::bytes_of(simulation_parameters),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
         // create compute bind layout group and compute pipeline layout
-
         let compute_bind_group_layout =
             state
                 .device
@@ -46,7 +56,7 @@ impl ParticleCompute {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
                                 min_binding_size: wgpu::BufferSize::new(
-                                    (sim_param_data.len() * size_of::<f32>()) as _,
+                                    std::mem::size_of::<SimParams>() as u64,
                                 ),
                             },
                             count: None,
@@ -109,7 +119,6 @@ impl ParticleCompute {
 
         // creates two buffers of particle data each of size num_particles
         // the two buffers alternate as dst and src for each frame
-
         let mut particle_buffers = Vec::<wgpu::Buffer>::new();
         let mut particle_bind_groups = Vec::<wgpu::BindGroup>::new();
         for i in 0..2 {
@@ -154,11 +163,10 @@ impl ParticleCompute {
 
         Self {
             compute_pipeline,
-            bind_group: particle_bind_groups[0].clone(),
             work_group_count,
             particle_buffers,
             particle_bind_groups,
-            frame_num: 0,
+            buffer_index: 0,
         }
     }
 
@@ -171,15 +179,16 @@ impl ParticleCompute {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(0, &self.particle_bind_groups[self.frame_num % 2], &[]);
+            cpass.set_bind_group(0, &self.particle_bind_groups[self.buffer_index % 2], &[]);
             cpass.dispatch_workgroups(self.work_group_count, 1, 1);
         }
         encoder.pop_debug_group();
 
-        self.frame_num ^= 1; // Toggle between 0 and 1
+        // Toggle between 0 and 1
+        self.buffer_index ^= 1;
     }
 
     pub fn get_particle_buffer(&self) -> &wgpu::Buffer {
-        &self.particle_buffers[self.frame_num]
+        &self.particle_buffers[self.buffer_index]
     }
 }

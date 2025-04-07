@@ -2,7 +2,10 @@ use bevy_math::Vec3;
 use wgpu::util::DeviceExt;
 
 use crate::{
-    camera::Camera, model::texture::Texture, particle_compute::ParticleCompute, util::load_obj,
+    camera::Camera,
+    model::Model,
+    particle_compute::{ParticleCompute, SimParams},
+    texture::Texture,
 };
 
 pub struct App {
@@ -16,11 +19,9 @@ pub struct App {
     camera_buffer: wgpu::Buffer,
     depth_texture: Texture,
 
-    compute: ParticleCompute,
+    models: Vec<Model>,
+    particles: ParticleCompute,
 
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    index_count: u32,
     render_pipeline: wgpu::RenderPipeline,
 }
 
@@ -28,6 +29,31 @@ impl App {
     pub fn new(state: &crate::State) -> Self {
         let num_particles = 1;
         let particles_per_group = 64;
+
+        let texture_bind_group_layout =
+            state
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                multisampled: false,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                    label: Some("texture_bind_group_layout"),
+                });
 
         let camera = Camera {
             eye: (-2.0, 0.0, 1.0).into(),
@@ -43,19 +69,17 @@ impl App {
             .device
             .create_shader_module(wgpu::include_wgsl!("shaders/draw.wgsl"));
 
-        let sim_param_data = [
-            0.04f32, // deltaT
-            0.1,     // rule1Distance
-            0.025,   // rule2Distance
-            0.025,   // rule3Distance
-            0.02,    // rule1Scale
-            0.05,    // rule2Scale
-            0.005,   // rule3Scale
-        ]
-        .to_vec();
+        let sim_data = SimParams {
+            delta_t: 0.04f32,
+            rule1_distance: 0.1,
+            rule2_distance: 0.025,
+            rule3_distance: 0.025,
+            rule1_scale: 0.02,
+            rule2_scale: 0.05,
+            rule3_scale: 0.005,
+        };
 
-        let compute =
-            ParticleCompute::new(state, num_particles, particles_per_group, &sim_param_data);
+        let compute = ParticleCompute::new(state, &sim_data, num_particles, particles_per_group);
 
         let camera_buffer = state
             .device
@@ -146,23 +170,10 @@ impl App {
             },
         );
 
-        // buffer for the three 2d triangle vertices of each instance
-        let (vertices, indices) = load_obj("./src/meshes/Car.obj");
-        let vertex_buffer = state
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-
-        let index_buffer = state
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        // load models
+        let models = vec![
+            Model::from_obj(state, &texture_bind_group_layout, "./assets/models/Car.obj").unwrap(),
+        ];
 
         Self {
             num_particles,
@@ -174,11 +185,8 @@ impl App {
             camera_buffer,
             depth_texture,
 
-            compute,
-
-            vertex_buffer,
-            index_buffer,
-            index_count: indices.len() as u32,
+            models,
+            particles: compute,
 
             render_pipeline,
             frame_num: 0,
@@ -218,17 +226,20 @@ impl App {
 
         command_encoder.push_debug_group("render boids");
         {
-            // render pass
             let mut rpass = command_encoder.begin_render_pass(&render_pass_descriptor);
             rpass.set_pipeline(&self.render_pipeline);
-            // render dst particles
-            rpass.set_vertex_buffer(0, self.compute.get_particle_buffer().slice(..));
             // set the camera bind group
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-            // the three instance-local vertices
-            rpass.set_vertex_buffer(1, self.vertex_buffer.slice(..));
-            rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            rpass.draw_indexed(0..self.index_count, 0, 0..self.num_particles);
+            // render dst particles
+            rpass.set_vertex_buffer(0, self.particles.get_particle_buffer().slice(..));
+
+            for model in &self.models {
+                for mesh in &model.meshes {
+                    rpass.set_vertex_buffer(1, mesh.vertex_buffer.slice(..));
+                    rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    rpass.draw_indexed(0..mesh.index_count, 0, 0..self.num_particles);
+                }
+            }
         }
         command_encoder.pop_debug_group();
 
@@ -239,7 +250,7 @@ impl App {
         if delta_time >= fixed_update_interval {
             self.last_update_time = now;
 
-            self.compute.render(&mut command_encoder);
+            self.particles.render(&mut command_encoder);
 
             // update frame count
             self.frame_num += 1;
