@@ -27,7 +27,7 @@ pub struct App {
 
 impl App {
     pub fn new(state: &crate::State) -> Self {
-        let num_particles = 1;
+        let num_particles = 64;
         let particles_per_group = 64;
 
         let texture_bind_group_layout =
