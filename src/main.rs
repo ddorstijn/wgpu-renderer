@@ -31,7 +31,7 @@ impl Vertex {
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
                 },
             ],
@@ -42,19 +42,19 @@ impl Vertex {
 const VERTICES: &[Vertex] = &[
     Vertex {
         position: [-0.5, -0.5, 0.0],
-        tex_coords: [0.0, 0.0],
+        tex_coords: [0.0, 1.0], // Bottom-left corner
     },
     Vertex {
         position: [-0.5, 0.5, 0.0],
-        tex_coords: [0.0, 1.0],
+        tex_coords: [0.0, 0.0], // Top-left corner
     },
     Vertex {
         position: [0.5, -0.5, 0.0],
-        tex_coords: [1.0, 0.0],
+        tex_coords: [1.0, 1.0], // Bottom-right corner
     },
     Vertex {
         position: [0.5, 0.5, 0.0],
-        tex_coords: [1., 1.],
+        tex_coords: [1.0, 0.0], // Top-right corner
     },
 ];
 
@@ -103,15 +103,15 @@ impl State {
         let surface_format = surface_capabilities
             .formats
             .iter()
-            .find(|f| f.is_srgb())
             .copied()
+            .find(|f| f.is_srgb())
             .unwrap_or(surface_capabilities.formats[0]);
 
         let present_mode = surface_capabilities
             .present_modes
             .iter()
-            .find(|m| *m == &wgpu::PresentMode::Immediate)
             .copied()
+            .find(|m| m == &wgpu::PresentMode::Immediate)
             .unwrap_or(surface_capabilities.present_modes[0]);
 
         let size = window.inner_size();
@@ -126,13 +126,9 @@ impl State {
             view_formats: vec![],
         };
 
-        let diffuse_texture = texture::Texture::from_bytes(
-            &device,
-            &queue,
-            include_bytes!("../assets/textures/happy-tree.png"),
-            "happy-tree.png",
-        )
-        .unwrap();
+        let diffuse_bytes = include_bytes!("../assets/textures/checker.png");
+        let diffuse_texture =
+            texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "checker.png").unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -142,7 +138,7 @@ impl State {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
@@ -151,7 +147,7 @@ impl State {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
                 ],
@@ -190,7 +186,7 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: Default::default(),
                 buffers: &[Vertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
@@ -287,7 +283,7 @@ impl State {
             render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
         }
 
-        self.queue.submit(Some(encoder.finish()));
+        self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
@@ -303,7 +299,11 @@ impl ApplicationHandler for Application {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(
             event_loop
-                .create_window(WindowAttributes::default().with_title("Hello WGPU!"))
+                .create_window(
+                    WindowAttributes::default()
+                        .with_title("Hello WGPU!")
+                        .with_inner_size(winit::dpi::PhysicalSize::new(600, 600)),
+                )
                 .unwrap(),
         );
 
