@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use bevy_math::{Mat4, Vec3, VectorSpace};
+use camera::Camera;
 use pollster::block_on;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -9,6 +11,7 @@ use winit::{
     window::{Window, WindowAttributes},
 };
 
+mod camera;
 mod texture;
 
 #[repr(C)]
@@ -41,24 +44,42 @@ impl Vertex {
 
 const VERTICES: &[Vertex] = &[
     Vertex {
-        position: [-0.5, -0.5, 0.0],
+        position: [-1., -1., 0.0],
         tex_coords: [0.0, 1.0], // Bottom-left corner
     },
     Vertex {
-        position: [-0.5, 0.5, 0.0],
+        position: [-1., 1., 0.0],
         tex_coords: [0.0, 0.0], // Top-left corner
     },
     Vertex {
-        position: [0.5, -0.5, 0.0],
+        position: [1., -1., 0.0],
         tex_coords: [1.0, 1.0], // Bottom-right corner
     },
     Vertex {
-        position: [0.5, 0.5, 0.0],
+        position: [1., 1., 0.0],
         tex_coords: [1.0, 0.0], // Top-right corner
     },
 ];
 
 const INDICES: &[u16] = &[1, 0, 2, 1, 2, 3];
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    mvp: [[f32; 4]; 4],
+}
+
+impl CameraUniform {
+    fn new() -> Self {
+        Self {
+            mvp: Mat4::IDENTITY.to_cols_array_2d(),
+        }
+    }
+
+    fn update(&mut self, camera: &Camera) {
+        self.mvp = camera.build_mvp().to_cols_array_2d();
+    }
+}
 
 struct State {
     window: Arc<Window>,
@@ -71,6 +92,10 @@ struct State {
     index_buffer: wgpu::Buffer,
     diffuse_bind_group: wgpu::BindGroup,
     // diffuse_texture: texture::Texture,
+    camera: Camera,
+    camera_uniform: CameraUniform,
+    camera_bind_group: wgpu::BindGroup,
+    camera_buffer: wgpu::Buffer,
 }
 
 impl State {
@@ -168,6 +193,50 @@ impl State {
             ],
         });
 
+        let camera = Camera {
+            eye: Vec3::new(0.0, 0.0001, 2.0),
+            target: Vec3::ZERO,
+            up: Vec3::Z,
+            aspect: size.width as f32 / size.height as f32,
+            fovy: std::f32::consts::FRAC_PI_4,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update(&camera);
+
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::bytes_of(&camera_uniform),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Camera Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<CameraUniform>() as u64,
+                        ),
+                    },
+                    count: None,
+                }],
+            });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Camera Bind Group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../assets/shaders/draw.wgsl").into()),
@@ -176,7 +245,7 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout],
+                bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -233,6 +302,10 @@ impl State {
             index_buffer,
             diffuse_bind_group,
             // diffuse_texture,
+            camera,
+            camera_uniform,
+            camera_bind_group,
+            camera_buffer,
         }
     }
 
@@ -278,6 +351,7 @@ impl State {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
@@ -299,11 +373,7 @@ impl ApplicationHandler for Application {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(
             event_loop
-                .create_window(
-                    WindowAttributes::default()
-                        .with_title("Hello WGPU!")
-                        .with_inner_size(winit::dpi::PhysicalSize::new(600, 600)),
-                )
+                .create_window(WindowAttributes::default().with_title("Hello WGPU!"))
                 .unwrap(),
         );
 
