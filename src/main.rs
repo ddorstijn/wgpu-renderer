@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use bevy_math::{Mat4, Vec3};
+use bevy_math::{Mat4, Quat, Vec3};
 use camera::Camera;
 use pollster::block_on;
+use texture::Texture;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -81,6 +82,63 @@ impl CameraUniform {
     }
 }
 
+#[derive(Debug)]
+struct Instance {
+    translation: Vec3,
+    rotation: Quat,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct InstanceRaw {
+    transform: [[f32; 4]; 4],
+}
+
+impl InstanceRaw {
+    fn new(instance: &Instance) -> Self {
+        Self {
+            transform: Mat4::from_rotation_translation(instance.rotation, instance.translation)
+                .to_cols_array_2d(),
+        }
+    }
+
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 0,
+                    shader_location: 5,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 16,
+                    shader_location: 6,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 32,
+                    shader_location: 7,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 48,
+                    shader_location: 8,
+                },
+            ],
+        }
+    }
+}
+
+const NUM_INSTANCES_PER_ROW: u32 = 10;
+const INSTANCE_DISPLACEMENT: Vec3 = Vec3::new(
+    NUM_INSTANCES_PER_ROW as f32,
+    NUM_INSTANCES_PER_ROW as f32,
+    0.0,
+);
+
 struct State {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -97,6 +155,9 @@ struct State {
     camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
     camera_controller: camera::CameraController,
+    instances: Vec<Instance>,
+    instance_buffer: wgpu::Buffer,
+    depth_texture: Texture,
 }
 
 impl State {
@@ -195,13 +256,13 @@ impl State {
         });
 
         let camera = Camera {
-            eye: Vec3::new(0.0, 0.0001, 2.0),
+            eye: Vec3::new(0.0, 0.0001, 4.0),
             target: Vec3::ZERO,
             up: Vec3::Z,
             aspect: size.width as f32 / size.height as f32,
             fovy: std::f32::consts::FRAC_PI_4,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 1000.0,
         };
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update(&camera);
@@ -240,6 +301,16 @@ impl State {
 
         let camera_controller = camera::CameraController::new(0.1);
 
+        let depth_texture = Texture::create_depth_texture(
+            &device,
+            wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            Some("Depth Texture"),
+        );
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../assets/shaders/draw.wgsl").into()),
@@ -259,7 +330,7 @@ impl State {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[Vertex::desc()],
+                buffers: &[Vertex::desc(), InstanceRaw::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -277,7 +348,13 @@ impl State {
                 conservative: false,
             },
             multisample: wgpu::MultisampleState::default(),
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multiview: None,
             cache: None,
         });
@@ -292,6 +369,38 @@ impl State {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(INDICES),
             usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let instances = (0..NUM_INSTANCES_PER_ROW)
+            .flat_map(|y| {
+                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                    let translation = Vec3 {
+                        x: x as f32,
+                        y: y as f32,
+                        z: 0.0,
+                    } - INSTANCE_DISPLACEMENT;
+
+                    let rotation = if translation.length_squared() == 0.0 {
+                        // this is needed so an object at (0, 0, 0) won't get scaled to zero
+                        // as Quaternions can affect scale if they're not created correctly
+                        Quat::from_axis_angle(Vec3::Z, 0.0)
+                    } else {
+                        Quat::from_axis_angle(translation.normalize(), std::f32::consts::FRAC_PI_4)
+                    };
+
+                    Instance {
+                        translation,
+                        rotation,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let instance_data = instances.iter().map(InstanceRaw::new).collect::<Vec<_>>();
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsages::VERTEX,
         });
 
         Self {
@@ -310,6 +419,9 @@ impl State {
             camera_bind_group,
             camera_buffer,
             camera_controller,
+            instances,
+            instance_buffer,
+            depth_texture,
         }
     }
 
@@ -362,7 +474,14 @@ impl State {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
@@ -371,8 +490,9 @@ impl State {
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
+            render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..self.instances.len() as u32);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
