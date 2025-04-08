@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bevy_math::{Mat4, Vec3, VectorSpace};
+use bevy_math::{Mat4, Vec3};
 use camera::Camera;
 use pollster::block_on;
 use wgpu::util::DeviceExt;
@@ -96,6 +96,7 @@ struct State {
     camera_uniform: CameraUniform,
     camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
+    camera_controller: camera::CameraController,
 }
 
 impl State {
@@ -136,7 +137,7 @@ impl State {
             .present_modes
             .iter()
             .copied()
-            .find(|m| m == &wgpu::PresentMode::Immediate)
+            .find(|m| m == &wgpu::PresentMode::Mailbox)
             .unwrap_or(surface_capabilities.present_modes[0]);
 
         let size = window.inner_size();
@@ -237,6 +238,8 @@ impl State {
             }],
         });
 
+        let camera_controller = camera::CameraController::new(0.1);
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../assets/shaders/draw.wgsl").into()),
@@ -306,6 +309,7 @@ impl State {
             camera_uniform,
             camera_bind_group,
             camera_buffer,
+            camera_controller,
         }
     }
 
@@ -313,6 +317,20 @@ impl State {
         self.surface_config.width = size.width;
         self.surface_config.height = size.height;
         self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    fn input(&mut self, event: &winit::event::KeyEvent) {
+        self.camera_controller.update_position(event);
+    }
+
+    fn update(&mut self) {
+        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_uniform.update(&self.camera);
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -392,6 +410,7 @@ impl ApplicationHandler for Application {
                     event_loop.exit();
                 }
                 WindowEvent::RedrawRequested => {
+                    state.update();
                     match state.render() {
                         Ok(_) => (),
                         Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -412,6 +431,9 @@ impl ApplicationHandler for Application {
                 }
                 WindowEvent::Resized(size) => {
                     state.resize(size);
+                }
+                WindowEvent::KeyboardInput { event, .. } => {
+                    state.input(&event);
                 }
                 _ => (),
             }

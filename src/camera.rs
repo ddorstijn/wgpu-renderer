@@ -1,7 +1,7 @@
 use bevy_math::{Mat4, Vec3};
 use winit::{
-    event::{ElementState, KeyEvent, WindowEvent},
-    keyboard::{Key, KeyCode, PhysicalKey},
+    event::{ElementState, KeyEvent},
+    keyboard::Key,
 };
 
 pub struct Camera {
@@ -23,7 +23,8 @@ impl Camera {
     }
 }
 
-struct CameraController {
+#[derive(Debug)]
+pub struct CameraController {
     speed: f32,
     is_forward_pressed: bool,
     is_backward_pressed: bool,
@@ -32,7 +33,7 @@ struct CameraController {
 }
 
 impl CameraController {
-    fn new(speed: f32) -> Self {
+    pub fn new(speed: f32) -> Self {
         Self {
             speed,
             is_forward_pressed: false,
@@ -42,67 +43,26 @@ impl CameraController {
         }
     }
 
-    fn update_position(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key: key,
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => match key.as_ref() {
-                Key::Character("W") => {
-                    self.is_forward_pressed = true;
-                    true
-                }
-                Key::Character("S") => {
-                    self.is_backward_pressed = true;
-                    true
-                }
-                Key::Character("A") => {
-                    self.is_left_pressed = true;
-                    true
-                }
-                Key::Character("D") => {
-                    self.is_right_pressed = true;
-                    true
-                }
-                _ => false,
-            },
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key: key,
-                        state: ElementState::Released,
-                        ..
-                    },
-                ..
-            } => match key.as_ref() {
-                Key::Character("W") => {
-                    self.is_forward_pressed = false;
-                    true
-                }
-                Key::Character("S") => {
-                    self.is_backward_pressed = false;
-                    true
-                }
-                Key::Character("A") => {
-                    self.is_left_pressed = false;
-                    true
-                }
-                Key::Character("D") => {
-                    self.is_right_pressed = false;
-                    true
-                }
-                _ => false,
-            },
-            _ => false,
+    pub fn update_position(&mut self, event: &KeyEvent) {
+        let is_pressed = event.state == ElementState::Pressed;
+        match event.logical_key.as_ref() {
+            Key::Character("w") => {
+                self.is_forward_pressed = is_pressed;
+            }
+            Key::Character("s") => {
+                self.is_backward_pressed = is_pressed;
+            }
+            Key::Character("a") => {
+                self.is_left_pressed = is_pressed;
+            }
+            Key::Character("d") => {
+                self.is_right_pressed = is_pressed;
+            }
+            _ => return,
         }
     }
 
-    fn update_camera(&self, camera: &mut Camera) {
+    pub fn update_camera(&self, camera: &mut Camera) {
         let forward = camera.target - camera.eye;
         let forward_norm = forward.normalize();
         let forward_mag = forward.length();
