@@ -3,15 +3,25 @@ name = "rs-vulkan"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 anyhow = "1.0.97"
 bevy_math = "0.15.3"
 bytemuck = "1.22.0"
 env_logger = "0.11.8"
-image = { version = "0.25.6", features = ["png"], default-features = false }
+gltf = "1.4.1"
+image = { version = "0.25.6", features = [
+    "png",
+    "jpeg",
+], default-features = false }
 log = "0.4.27"
 nanorand = "0.7.0"
 pollster = "0.4.0"
-tobj = "4.0.3"
 wgpu = "24.0.3"
 winit = "0.30.9"
+
+[[bin]]
+name = "rs-vulkan-runner"
+path = "src/main.rs"

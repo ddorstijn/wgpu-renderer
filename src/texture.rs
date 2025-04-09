@@ -9,30 +9,31 @@ pub struct Texture {
 }
 
 impl Texture {
-    pub fn from_bytes(
+    pub fn from_path<P: AsRef<std::path::Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bytes: &[u8],
+        path: P,
         label: &str,
     ) -> Result<Self> {
-        let img = image::load_from_memory(bytes)?;
-        Self::from_image(device, queue, &img, Some(label))
-    }
+        let img = image::open(path)?;
 
-    pub fn from_image(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        img: &image::DynamicImage,
-        label: Option<&str>,
-    ) -> Result<Self> {
-        let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
-
         let size = wgpu::Extent3d {
             width: dimensions.0,
             height: dimensions.1,
             depth_or_array_layers: 1,
         };
+
+        Self::from_image(device, queue, size, &img.to_rgb8(), Some(label))
+    }
+
+    pub fn from_image(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: wgpu::Extent3d,
+        bytes: &[u8],
+        label: Option<&str>,
+    ) -> Result<Self> {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
             size,
@@ -51,11 +52,11 @@ impl Texture {
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
-            &rgba,
+            &bytes,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * dimensions.0),
-                rows_per_image: Some(dimensions.1),
+                bytes_per_row: Some(4 * size.width),
+                rows_per_image: Some(size.height),
             },
             size,
         );
