@@ -1,95 +1,178 @@
+use std::time::Duration;
+
 use bevy_math::{Mat4, Vec3};
 use winit::{
-    event::{ElementState, KeyEvent},
-    keyboard::Key,
+    dpi::PhysicalPosition,
+    event::{ElementState, MouseScrollDelta},
+    keyboard::KeyCode,
 };
 
+#[derive(Debug)]
 pub struct Camera {
-    pub eye: Vec3,
-    pub target: Vec3,
-    pub up: Vec3,
-    pub aspect: f32,
-    pub fovy: f32,
-    pub znear: f32,
-    pub zfar: f32,
+    pub position: Vec3,
+    yaw: f32,
+    pitch: f32,
 }
 
 impl Camera {
-    pub fn build_mvp(&self) -> Mat4 {
-        let view = Mat4::look_at_rh(self.eye, self.target, self.up);
-        let proj = Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar);
+    pub fn new(position: Vec3, yaw: f32, pitch: f32) -> Self {
+        Self {
+            position,
+            yaw,
+            pitch,
+        }
+    }
 
-        return proj * view;
+    pub fn to_mat4(&self) -> Mat4 {
+        let (sin_pitch, cos_pitch) = self.pitch.sin_cos();
+        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
+
+        Mat4::look_to_rh(
+            self.position,
+            Vec3::new(cos_pitch * cos_yaw, cos_pitch * sin_yaw, sin_pitch).normalize(),
+            Vec3::Z,
+        )
     }
 }
 
 #[derive(Debug)]
 pub struct CameraController {
+    amount_left: f32,
+    amount_right: f32,
+    amount_forward: f32,
+    amount_backward: f32,
+    amount_up: f32,
+    amount_down: f32,
+    rotate_horizontal: f32,
+    rotate_vertical: f32,
+    scroll: f32,
     speed: f32,
-    is_forward_pressed: bool,
-    is_backward_pressed: bool,
-    is_left_pressed: bool,
-    is_right_pressed: bool,
+    sensitivity: f32,
 }
 
 impl CameraController {
-    pub fn new(speed: f32) -> Self {
+    pub fn new(speed: f32, sensitivity: f32) -> Self {
         Self {
+            amount_left: 0.0,
+            amount_right: 0.0,
+            amount_forward: 0.0,
+            amount_backward: 0.0,
+            amount_up: 0.0,
+            amount_down: 0.0,
+            rotate_horizontal: 0.0,
+            rotate_vertical: 0.0,
+            scroll: 0.0,
             speed,
-            is_forward_pressed: false,
-            is_backward_pressed: false,
-            is_left_pressed: false,
-            is_right_pressed: false,
+            sensitivity,
         }
     }
 
-    pub fn update_position(&mut self, event: &KeyEvent) {
-        let is_pressed = event.state == ElementState::Pressed;
-        match event.logical_key.as_ref() {
-            Key::Character("w") => {
-                self.is_forward_pressed = is_pressed;
+    pub fn process_keyboard(&mut self, key: winit::keyboard::KeyCode, state: ElementState) {
+        let amount = if state == ElementState::Pressed {
+            1.0
+        } else {
+            0.0
+        };
+        match key {
+            KeyCode::KeyW | KeyCode::ArrowUp => {
+                self.amount_forward = amount;
             }
-            Key::Character("s") => {
-                self.is_backward_pressed = is_pressed;
+            KeyCode::KeyS | KeyCode::ArrowDown => {
+                self.amount_backward = amount;
             }
-            Key::Character("a") => {
-                self.is_left_pressed = is_pressed;
+            KeyCode::KeyA | KeyCode::ArrowLeft => {
+                self.amount_left = amount;
             }
-            Key::Character("d") => {
-                self.is_right_pressed = is_pressed;
+            KeyCode::KeyD | KeyCode::ArrowRight => {
+                self.amount_right = amount;
             }
-            _ => return,
+            KeyCode::Space => {
+                self.amount_up = amount;
+            }
+            KeyCode::ShiftLeft => {
+                self.amount_down = amount;
+            }
+            _ => (),
         }
     }
 
-    pub fn update_camera(&self, camera: &mut Camera) {
-        let forward = camera.target - camera.eye;
-        let forward_norm = forward.normalize();
-        let forward_mag = forward.length();
+    pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
+        self.rotate_horizontal = mouse_dx as f32;
+        self.rotate_vertical = mouse_dy as f32;
+    }
 
-        // Prevents glitching when the camera gets too close to the
-        // center of the scene.
-        if self.is_forward_pressed && forward_mag > self.speed {
-            camera.eye += forward_norm * self.speed;
-        }
-        if self.is_backward_pressed {
-            camera.eye -= forward_norm * self.speed;
-        }
+    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+        self.scroll = -match delta {
+            // I'm assuming a line is about 100 pixels
+            MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => *scroll as f32,
+        };
+    }
 
-        let right = forward_norm.cross(camera.up);
+    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+        let dt = dt.as_secs_f32();
 
-        // Redo radius calc in case the forward/backward is pressed.
-        let forward = camera.target - camera.eye;
-        let forward_mag = forward.length();
+        // Move forward/backward and left/right
+        let (yaw_sin, yaw_cos) = camera.yaw.sin_cos();
+        let forward = Vec3::new(yaw_cos, yaw_sin, 0.0).normalize();
+        let right = Vec3::new(-yaw_sin, yaw_cos, 0.0).normalize();
+        camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
+        camera.position -= right * (self.amount_right - self.amount_left) * self.speed * dt;
 
-        if self.is_right_pressed {
-            // Rescale the distance between the target and the eye so
-            // that it doesn't change. The eye, therefore, still
-            // lies on the circle made by the target and eye.
-            camera.eye = camera.target - (forward + right * self.speed).normalize() * forward_mag;
+        // Move in/out (aka. "zoom")
+        // Note: this isn't an actual zoom. The camera's position
+        // changes when zooming. I've added this to make it easier
+        // to get closer to an object you want to focus on.
+        let (pitch_sin, pitch_cos) = camera.pitch.sin_cos();
+        let scrollward = Vec3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
+        camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
+        self.scroll = 0.0;
+
+        // Move up/down. Since we don't use roll, we can just
+        // modify the y coordinate directly.
+        camera.position.z += (self.amount_up - self.amount_down) * self.speed * dt;
+
+        // Rotate
+        camera.yaw -= self.rotate_horizontal * self.sensitivity * dt;
+        camera.pitch += -self.rotate_vertical * self.sensitivity * dt;
+
+        // If process_mouse isn't called every frame, these values
+        // will not get set to zero, and the camera will rotate
+        // when moving in a non-cardinal direction.
+        self.rotate_horizontal = 0.0;
+        self.rotate_vertical = 0.0;
+
+        // Keep the camera's angle from going too high/low.
+        if camera.pitch < -std::f32::consts::FRAC_PI_2 {
+            camera.pitch = -std::f32::consts::FRAC_PI_2;
+        } else if camera.pitch > std::f32::consts::FRAC_PI_2 {
+            camera.pitch = std::f32::consts::FRAC_PI_2;
         }
-        if self.is_left_pressed {
-            camera.eye = camera.target - (forward - right * self.speed).normalize() * forward_mag;
+    }
+}
+
+pub struct Projection {
+    aspect: f32,
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Projection {
+    pub fn new(width: u32, height: u32, fovy: f32, znear: f32, zfar: f32) -> Self {
+        Self {
+            aspect: width as f32 / height as f32,
+            fovy,
+            znear,
+            zfar,
         }
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.aspect = width as f32 / height as f32;
+    }
+
+    pub fn to_mat4(&self) -> Mat4 {
+        Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar)
     }
 }

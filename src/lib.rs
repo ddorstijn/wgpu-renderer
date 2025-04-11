@@ -1,39 +1,21 @@
 use std::sync::Arc;
 
-use bevy_math::{Mat3, Mat4, Quat, Vec3};
-use camera::Camera;
+use bevy_math::{Mat3, Mat4, Quat, Vec3, Vec4};
+use camera::{Camera, Projection};
 use model::{DrawLight, DrawModel, ModelVertex, Vertex};
-use pollster::block_on;
 use texture::Texture;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowAttributes},
 };
 
 mod camera;
 mod model;
 mod texture;
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
-    mvp: [[f32; 4]; 4],
-}
-
-impl CameraUniform {
-    fn new() -> Self {
-        Self {
-            mvp: Mat4::IDENTITY.to_cols_array_2d(),
-        }
-    }
-
-    fn update(&mut self, camera: &Camera) {
-        self.mvp = camera.build_mvp().to_cols_array_2d();
-    }
-}
 
 #[derive(Debug)]
 struct Instance {
@@ -115,7 +97,22 @@ struct LightUniform {
     _padding2: u32,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CameraUniform {
+    view_position: Vec4,
+    view_projection: Mat4,
+}
+
+impl CameraUniform {
+    fn update(&mut self, camera: &Camera, projection: &Projection) {
+        self.view_position = camera.position.extend(1.0);
+        self.view_projection = projection.to_mat4() * camera.to_mat4();
+    }
+}
+
 fn create_render_pipeline(
+    label: Option<&str>,
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     color_format: wgpu::TextureFormat,
@@ -126,7 +123,7 @@ fn create_render_pipeline(
     let shader = device.create_shader_module(shader);
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Render Pipeline"),
+        label: label,
         layout: Some(&layout),
         vertex: wgpu::VertexState {
             module: &shader,
@@ -178,6 +175,7 @@ struct State {
     camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
     camera_controller: camera::CameraController,
+    projection: camera::Projection,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
@@ -298,17 +296,21 @@ impl State {
             label: None,
         });
 
-        let camera = Camera {
-            eye: Vec3::new(0.0, 0.0001, 4.0),
-            target: Vec3::ZERO,
-            up: Vec3::Z,
-            aspect: size.width as f32 / size.height as f32,
-            fovy: std::f32::consts::FRAC_PI_4,
-            znear: 0.1,
-            zfar: 1000.0,
-        };
-        let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update(&camera);
+        let camera = camera::Camera::new(
+            Vec3::new(0.0, 5.0, 10.0),
+            -std::f32::consts::PI,
+            -20.0f32.to_radians(),
+        );
+        let projection = camera::Projection::new(
+            surface_config.width,
+            surface_config.height,
+            std::f32::consts::FRAC_PI_2,
+            0.1,
+            100.0,
+        );
+        let camera_controller = camera::CameraController::new(4.0, 0.8);
+        let mut camera_uniform = CameraUniform::default();
+        camera_uniform.update(&camera, &projection);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -321,7 +323,7 @@ impl State {
                 label: Some("Camera Bind Group Layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -342,8 +344,6 @@ impl State {
             }],
         });
 
-        let camera_controller = camera::CameraController::new(0.1);
-
         let depth_texture = Texture::create_depth_texture(
             &device,
             wgpu::Extent3d {
@@ -351,7 +351,7 @@ impl State {
                 height: size.height,
                 depth_or_array_layers: 1,
             },
-            Some("Depth Texture"),
+            "Depth Texture",
         );
 
         let shader = wgpu::ShaderModuleDescriptor {
@@ -371,6 +371,7 @@ impl State {
             });
 
         let render_pipeline = create_render_pipeline(
+            Some("Render Pipeline"),
             &device,
             &render_pipeline_layout,
             surface_format,
@@ -392,6 +393,7 @@ impl State {
                 ),
             };
             create_render_pipeline(
+                Some("Light Render Pipeline"),
                 &device,
                 &layout,
                 surface_config.format,
@@ -461,6 +463,7 @@ impl State {
             camera_bind_group,
             camera_buffer,
             camera_controller,
+            projection,
             instances,
             instance_buffer,
             depth_texture,
@@ -472,15 +475,20 @@ impl State {
         self.surface_config.width = size.width;
         self.surface_config.height = size.height;
         self.surface.configure(&self.device, &self.surface_config);
+
+        let size = wgpu::Extent3d {
+            width: size.width,
+            height: size.height,
+            depth_or_array_layers: 1,
+        };
+        self.depth_texture =
+            texture::Texture::create_depth_texture(&self.device, size, "depth_texture");
+        self.projection.resize(size.width, size.height);
     }
 
-    fn input(&mut self, event: &winit::event::KeyEvent) {
-        self.camera_controller.update_position(event);
-    }
-
-    fn update(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera);
-        self.camera_uniform.update(&self.camera);
+    fn update(&mut self, dt: std::time::Duration) {
+        self.camera_controller.update_camera(&mut self.camera, dt);
+        self.camera_uniform.update(&self.camera, &self.projection);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -488,7 +496,8 @@ impl State {
         );
 
         let old_position: Vec3 = self.light_uniform.position.into();
-        self.light_uniform.position = (Quat::from_axis_angle(Vec3::Z, 0.001) * old_position).into();
+        self.light_uniform.position =
+            (Quat::from_axis_angle(Vec3::Z, 0.001 * dt.as_secs_f32()) * old_position).into();
         self.queue.write_buffer(
             &self.light_buffer,
             0,
@@ -563,9 +572,18 @@ impl State {
     }
 }
 
-#[derive(Default)]
 struct Application {
     state: Option<State>,
+    last_update: std::time::Instant,
+}
+
+impl Default for Application {
+    fn default() -> Self {
+        Self {
+            state: None,
+            last_update: std::time::Instant::now(),
+        }
+    }
 }
 
 impl ApplicationHandler for Application {
@@ -576,7 +594,7 @@ impl ApplicationHandler for Application {
                 .unwrap(),
         );
 
-        self.state = Some(block_on(State::new(window)));
+        self.state = Some(pollster::block_on(State::new(window)));
     }
 
     fn window_event(
@@ -587,11 +605,23 @@ impl ApplicationHandler for Application {
     ) {
         if let Some(state) = &mut self.state {
             match event {
-                WindowEvent::CloseRequested => {
+                WindowEvent::CloseRequested
+                | WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::Escape),
+                            state: ElementState::Pressed,
+                            ..
+                        },
+                    ..
+                } => {
                     event_loop.exit();
                 }
                 WindowEvent::RedrawRequested => {
-                    state.update();
+                    let now = std::time::Instant::now();
+                    let dt = now - self.last_update;
+                    state.update(dt);
+                    self.last_update = now;
                     match state.render() {
                         Ok(_) => (),
                         Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -613,8 +643,33 @@ impl ApplicationHandler for Application {
                 WindowEvent::Resized(size) => {
                     state.resize(size);
                 }
-                WindowEvent::KeyboardInput { event, .. } => {
-                    state.input(&event);
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(key),
+                            state: key_state,
+                            ..
+                        },
+                    ..
+                } => state.camera_controller.process_keyboard(key, key_state),
+                _ => (),
+            }
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let Some(state) = &mut self.state {
+            match event {
+                winit::event::DeviceEvent::MouseMotion { delta } => {
+                    state.camera_controller.process_mouse(delta.0, delta.1);
+                }
+                winit::event::DeviceEvent::MouseWheel { delta } => {
+                    state.camera_controller.process_scroll(&delta);
                 }
                 _ => (),
             }
