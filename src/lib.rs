@@ -10,7 +10,8 @@ use winit::{
     event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::{Window, WindowAttributes},
+    monitor::{self, VideoModeHandle},
+    window::{Fullscreen, Window, WindowAttributes},
 };
 
 mod camera;
@@ -593,6 +594,13 @@ impl ApplicationHandler for Application {
                 .create_window(WindowAttributes::default().with_title("Hello WGPU!"))
                 .unwrap(),
         );
+
+        window.set_cursor_visible(false);
+        window.set_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())));
+
+        window
+            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+            .unwrap();
 
         self.state = Some(pollster::block_on(State::new(window)));
     }
