@@ -1,0 +1,18 @@
+[package]
+name = "road"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+anyhow = "1.0.98"
+bytemuck = "1.23.1"
+env_logger = "0.11.8"
+glam = "0.30.4"
+log = "0.4.27"
+ordered-float = "5.0.0"
+pollster = "0.4.0"
+wgpu = "26.0.1"
+winit = "0.30.11"
