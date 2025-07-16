@@ -11,6 +11,10 @@ anyhow = "1.0.98"
 bytemuck = "1.23.1"
 env_logger = "0.11.8"
 glam = { version = "0.30.4", features = ["bytemuck", "fast-math"] }
+image = { version = "0.25.6", default-features = false, features = [
+    "jpeg",
+    "png",
+] }
 log = "0.4.27"
 ordered-float = "5.0.0"
 pollster = "0.4.0"
