@@ -1,5 +1,5 @@
 use crate::texture;
-use glam::Mat4;
+use glam::{Mat4, Vec2, Vec3};
 use std::{ops::Range, path::Path};
 use wgpu::util::DeviceExt;
 
@@ -9,22 +9,6 @@ pub struct Instance {
     pub transform: Mat4,
 }
 
-impl Vertex for Instance {
-    const ATTRIBS: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
-        5 => Float32x4,
-        6 => Float32x4,
-        7 => Float32x4,
-        8 => Float32x4,
-    ];
-
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: Self::ATTRIBS,
-        }
-    }
-}
 #[derive(Debug)]
 pub struct Model {
     pub meshes: Vec<Mesh>,
@@ -82,34 +66,34 @@ impl Model {
                 let vertices = (0..m.mesh.positions.len() / 3)
                     .map(|i| {
                         if m.mesh.normals.is_empty() {
-                            ModelVertex {
-                                position: [
+                            Vertex {
+                                position: Vec3::new(
                                     m.mesh.positions[i * 3],
                                     m.mesh.positions[i * 3 + 1],
                                     m.mesh.positions[i * 3 + 2],
-                                ],
-                                tex_coords: [
+                                ),
+                                uv: Vec2::new(
                                     m.mesh.texcoords[i * 2],
                                     1.0 - m.mesh.texcoords[i * 2 + 1],
-                                ],
-                                normal: [0.0, 0.0, 0.0],
+                                ),
+                                normal: Vec3::new(0.0, 0.0, 0.0),
                             }
                         } else {
-                            ModelVertex {
-                                position: [
+                            Vertex {
+                                position: Vec3::new(
                                     m.mesh.positions[i * 3],
                                     m.mesh.positions[i * 3 + 1],
                                     m.mesh.positions[i * 3 + 2],
-                                ],
-                                tex_coords: [
+                                ),
+                                uv: Vec2::new(
                                     m.mesh.texcoords[i * 2],
                                     1.0 - m.mesh.texcoords[i * 2 + 1],
-                                ],
-                                normal: [
+                                ),
+                                normal: Vec3::new(
                                     m.mesh.normals[i * 3],
                                     m.mesh.normals[i * 3 + 1],
                                     m.mesh.normals[i * 3 + 2],
-                                ],
+                                ),
                             }
                         }
                     })
@@ -156,28 +140,22 @@ pub struct Mesh {
     pub material: usize,
 }
 
-pub trait Vertex {
-    const ATTRIBS: &'static [wgpu::VertexAttribute];
-
-    fn desc() -> wgpu::VertexBufferLayout<'static>;
-}
-
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ModelVertex {
-    pub position: [f32; 3],
-    pub tex_coords: [f32; 2],
-    pub normal: [f32; 3],
+pub struct Vertex {
+    pub position: Vec3,
+    pub uv: Vec2,
+    pub normal: Vec3,
 }
 
-impl Vertex for ModelVertex {
+impl Vertex {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
         0 => Float32x3, // position
-        1 => Float32x2, // tex_coords
+        1 => Float32x2, // uv
         2 => Float32x3  // normal
     ];
 
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
