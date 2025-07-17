@@ -1,162 +1,317 @@
+use std::sync::Arc;
+
 use glam::Vec2;
 use wgpu::util::DeviceExt;
 
 use crate::util::create_render_pipeline;
 
-pub struct ClipmapLevel {
-    pub elevation: wgpu::TextureView,
-    pub normal_map: wgpu::TextureView,
+// In your main render state or engine structure
+pub struct TerrainSystem {
+    levels: Vec<ClipmapLevel>,
+    render_pipeline: wgpu::RenderPipeline,
+
+    // Shared mesh data, stored once
+    vertex_buffer: Arc<wgpu::Buffer>,
+    index_buffer: Arc<wgpu::Buffer>,
+    index_count: u32,
+
+    // Shared heightmap resources
+    heightmap_texture: wgpu::Texture,
+    heightmap_view: wgpu::TextureView,
+    heightmap_sampler: wgpu::Sampler,
+    shared_bind_group: wgpu::BindGroup,
 }
 
-impl ClipmapLevel {
-    pub fn new(device: &wgpu::Device, grid_size: u32) -> Self {
-        let elevation_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Elevation Texture"),
-            size: wgpu::Extent3d {
-                width: grid_size,
-                height: grid_size,
-                depth_or_array_layers: 1,
+// Represents a single level of the clipmap. Note it no longer contains buffers.
+struct ClipmapLevel {
+    // Each level has its own uniform buffer for scale and offset
+    uniform_buffer: wgpu::Buffer,
+    // The bind group connects the uniform buffer to the shader
+    bind_group: wgpu::BindGroup,
+
+    // CPU-side tracking
+    current_offset: (i32, i32),
+    scale: f32,
+}
+
+impl TerrainSystem {
+    // M is the resolution of your grid, e.g., 255
+    const M: usize = 255;
+
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        render_format: wgpu::TextureFormat,
+    ) -> Self {
+        // --- Heightmap Generation (Placeholder) ---
+        let heightmap_size = 1024;
+        let heightmap_data: Vec<f32> = vec![0.5; heightmap_size * heightmap_size]; // Flat terrain
+        let heightmap_texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("Heightmap Texture"),
+                size: wgpu::Extent3d {
+                    width: heightmap_size as u32,
+                    height: heightmap_size as u32,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
+            wgpu::util::TextureDataOrder::LayerMajor,
+            bytemuck::cast_slice(&heightmap_data),
+        );
+        let heightmap_view = heightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let heightmap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Heightmap Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
 
-        // 2. Create normal texture: 4-channel 8-bit (RGBA8Unorm) for packing fine/coarse normals
-        let normal_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Normal Texture"),
-            size: wgpu::Extent3d {
-                width: grid_size * 2, // optional: use higher-res for finer shading
-                height: grid_size * 2,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
+        // --- Mesh Generation ---
+        let (vertex_buffer, index_buffer, index_count) = Self::create_grid_mesh(device);
+
+        // --- Bind Group Layouts ---
+        let shared_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Terrain Shared BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let level_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Terrain Level BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        // --- Bind Groups ---
+        let shared_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Terrain Shared BG"),
+            layout: &shared_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&heightmap_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&heightmap_sampler),
+                },
+            ],
         });
 
-        Self {
-            elevation: elevation_texture.create_view(&wgpu::TextureViewDescriptor::default()),
-            normal_map: normal_texture.create_view(&wgpu::TextureViewDescriptor::default()),
-        }
-    }
-}
+        // --- Render Pipeline ---
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Terrain Pipeline Layout"),
+                bind_group_layouts: &[
+                    camera_bind_group_layout,
+                    &shared_bind_group_layout,
+                    &level_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
 
-pub struct GeometryClipmap {
-    pub levels: Vec<ClipmapLevel>,
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub pipeline: wgpu::RenderPipeline,
-}
-
-impl GeometryClipmap {
-    pub fn new(device: &wgpu::Device, grid_size: u32, num_levels: usize) -> Self {
-        let block_size = (grid_size as u16 + 1) / 4;
-
-        let levels = (0..num_levels)
-            .map(|_| ClipmapLevel::new(device, grid_size))
-            .collect();
-        let vertex_buffer = Self::create_grid_vertex_buffer(device, block_size);
-        let index_buffer = Self::create_grid_index_buffer(device, block_size);
-        // Define vertex format: just vec2<f32>
-        let vertex_layouts = [wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float32x2,
-            }],
-        }];
-
-        // Create pipeline layout
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Terrain Pipeline Layout"),
-            bind_group_layouts: &[/* your texture + uniform bind groups here */],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = create_render_pipeline(
+        let render_pipeline = create_render_pipeline(
             device,
-            &layout,
-            color_format,
-            depth_format,
-            &vertex_layouts,
+            &render_pipeline_layout,
+            render_format,
+            &[TerrainVertex::desc()],
             wgpu::include_wgsl!("terrain.wgsl"),
         );
 
+        // --- Create Clipmap Levels ---
+        let num_levels = 6;
+        let mut levels = Vec::with_capacity(num_levels);
+        for i in 0..num_levels {
+            let scale = 2.0f32.powi(i as i32);
+
+            let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("Level {} Uniform Buffer", i)),
+                size: std::mem::size_of::<LevelUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Level {} BG", i)),
+                layout: &level_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                }],
+            });
+
+            levels.push(ClipmapLevel {
+                uniform_buffer,
+                bind_group,
+                current_offset: (0, 0),
+                scale,
+            });
+        }
+
         Self {
             levels,
+            render_pipeline,
             vertex_buffer,
             index_buffer,
-            pipeline,
+            index_count,
+            heightmap_texture,
+            heightmap_view,
+            heightmap_sampler,
+            shared_bind_group,
         }
     }
 
-    pub fn render(&self, pass: &mut wgpu::RenderPass, camera_pos: [f32; 2]) {
-        pass.set_pipeline(&self.pipeline);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        for level in &self.levels {
-            bind_textures_and_uniforms(pass, level, camera_pos);
-            pass.draw_indexed(0..num_indices, 0, 0..1);
-        }
-    }
+    fn create_grid_mesh(device: &wgpu::Device) -> (Arc<wgpu::Buffer>, Arc<wgpu::Buffer>, u32) {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
 
-    fn create_grid_vertex_buffer(device: &wgpu::Device, block_size: u16) -> wgpu::Buffer {
-        let mut vertices = Vec::with_capacity(block_size as usize);
-
-        for y in 0..block_size {
-            for x in 0..block_size {
-                vertices.push(Vec2::new(x as f32, y as f32));
+        for j in 0..=Self::M {
+            for i in 0..=Self::M {
+                vertices.push(TerrainVertex {
+                    // Position vertices in a [-0.5, 0.5] range
+                    position: Vec2::new(
+                        i as f32 / Self::M as f32 - 0.5,
+                        j as f32 / Self::M as f32 - 0.5,
+                    ),
+                });
             }
         }
 
-        let raw_bytes = bytemuck::cast_slice(&vertices);
+        for j in 0..Self::M {
+            for i in 0..Self::M {
+                let row1 = (j * (Self::M + 1)) as u32;
+                let row2 = ((j + 1) * (Self::M + 1)) as u32;
+                indices.push(row1 + i as u32);
+                indices.push(row2 + i as u32);
+                indices.push(row1 + (i + 1) as u32);
+                indices.push(row1 + (i + 1) as u32);
+                indices.push(row2 + i as u32);
+                indices.push(row2 + (i + 1) as u32);
+            }
+        }
 
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grid Vertex Buffer"),
-            contents: raw_bytes,
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Terrain Vertex Buffer"),
+            contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
-        })
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Terrain Index Buffer"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        (
+            Arc::new(vertex_buffer),
+            Arc::new(index_buffer),
+            indices.len() as u32,
+        )
     }
 
-    fn create_grid_index_buffer(device: &wgpu::Device, block_size: u16) -> wgpu::Buffer {
-        // Number of vertices along one dimension
-        let verts_per_row = block_size;
-        let mut indices: Vec<u16> = Vec::new();
+    pub fn update_terrain_system(&mut self, queue: &wgpu::Queue, camera_position: glam::Vec3) {
+        for level in &mut self.levels {
+            let grid_cell_size = level.scale;
+            let camera_x = (camera_position.x / grid_cell_size).floor() as i32;
+            let camera_z = (camera_position.z / grid_cell_size).floor() as i32;
 
-        for y in 0..(block_size - 1) {
-            for x in 0..verts_per_row {
-                let i0 = y * verts_per_row + x;
-                let i1 = (y + 1) * verts_per_row + x;
-                indices.push(i0);
-                indices.push(i1);
-            }
-
-            // Insert degenerate triangle (duplicate last vertex) unless it's the last strip
-            if y < block_size - 2 {
-                let last_i1 = (y + 1) * verts_per_row + (verts_per_row - 1);
-                let next_i0 = (y + 1) * verts_per_row;
-                indices.push(last_i1);
-                indices.push(next_i0);
+            if camera_x != level.current_offset.0 || camera_z != level.current_offset.1 {
+                level.current_offset = (camera_x, camera_z);
+                let new_offset_x = camera_x as f32 * grid_cell_size;
+                let new_offset_z = camera_z as f32 * grid_cell_size;
+                let uniforms = LevelUniforms {
+                    offset_scale: [new_offset_x, new_offset_z, level.scale, 0.0],
+                };
+                queue.write_buffer(&level.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
             }
         }
+    }
 
-        let raw_bytes = bytemuck::cast_slice(&indices);
+    pub fn render<'rpass>(
+        &'rpass self,
+        rpass: &mut wgpu::RenderPass<'rpass>,
+        camera_bind_group: &'rpass wgpu::BindGroup,
+    ) {
+        rpass.set_pipeline(&self.render_pipeline);
 
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grid Index Buffer"),
-            contents: raw_bytes,
-            usage: wgpu::BufferUsages::INDEX,
-        })
+        // Set shared bind groups once
+        rpass.set_bind_group(0, camera_bind_group, &[]);
+        rpass.set_bind_group(1, &self.shared_bind_group, &[]);
+
+        // Set shared mesh buffers once
+        rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+        // Iterate through the levels to draw them
+        for level in &self.levels {
+            // Set the per-level bind group
+            rpass.set_bind_group(2, &level.bind_group, &[]);
+            rpass.draw_indexed(0..self.index_count, 0, 0..1);
+        }
+    }
+}
+
+// Uniforms sent to the GPU for each level
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct LevelUniforms {
+    // We use a vec4 for alignment reasons. xy is the offset, z is scale.
+    offset_scale: [f32; 4],
+}
+
+// The vertex layout for our grid mesh
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct TerrainVertex {
+    // We only need a 2D position for the grid, the Y value comes from the heightmap
+    position: Vec2,
+}
+
+impl TerrainVertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x2];
+
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<TerrainVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
     }
 }

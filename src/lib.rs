@@ -13,6 +13,7 @@ use winit::{
 use crate::{
     camera::{Camera, CameraController},
     model::{DrawModel, Instance, Model, Vertex},
+    terrain::TerrainSystem,
     util::create_render_pipeline,
 };
 
@@ -40,6 +41,7 @@ pub struct State {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     heightmap_bindgroup: wgpu::BindGroup,
+    terrain: TerrainSystem,
 }
 
 impl State {
@@ -233,10 +235,11 @@ impl State {
             &device,
             &render_pipeline_layout,
             config.format,
-            Some(depth_texture.texture.format()),
             &[Vertex::desc()],
             wgpu::include_wgsl!("shader.wgsl"),
         );
+
+        let terrain = TerrainSystem::new(&device, &queue, &camera_bind_group_layout, config.format);
 
         Ok(Self {
             window,
@@ -256,6 +259,7 @@ impl State {
             camera_buffer,
             camera_bind_group,
             heightmap_bindgroup,
+            terrain,
         })
     }
 
@@ -276,6 +280,8 @@ impl State {
 
     pub fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
+        self.terrain
+            .update_terrain_system(&self.queue, self.camera.eye);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -337,6 +343,9 @@ impl State {
             for model in &self.models {
                 render_pass.draw_model_instanced(model, 0..self.instances.len() as _);
             }
+
+            self.terrain
+                .render(&mut render_pass, &self.camera_bind_group);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

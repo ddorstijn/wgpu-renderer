@@ -1,8 +1,7 @@
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    color_format: wgpu::TextureFormat,
-    depth_format: Option<wgpu::TextureFormat>,
+    render_format: wgpu::TextureFormat,
     vertex_layouts: &[wgpu::VertexBufferLayout],
     shader: wgpu::ShaderModuleDescriptor,
 ) -> wgpu::RenderPipeline {
@@ -23,7 +22,7 @@ pub fn create_render_pipeline(
             module: &shader,
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
-                format: color_format,
+                format: render_format,
                 blend: Some(wgpu::BlendState {
                     alpha: wgpu::BlendComponent::REPLACE,
                     color: wgpu::BlendComponent::REPLACE,
@@ -43,8 +42,8 @@ pub fn create_render_pipeline(
             conservative: false,
         },
 
-        depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
-            format,
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),
