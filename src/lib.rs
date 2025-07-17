@@ -10,7 +10,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::camera::Camera;
+use crate::camera::{Camera, CameraController};
 
 mod camera;
 mod texture;
@@ -39,28 +39,88 @@ impl Vertex {
 
 const VERTICES: &[Vertex] = &[
     Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
-        tex_coords: [0.4131759, 0.99240386],
+        position: [-1.0, 0.0, -1.0],
+        tex_coords: [0.0, 0.0],
     },
     Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        tex_coords: [0.0048659444, 0.56958647],
+        position: [-1.0, 0.0, 1.0],
+        tex_coords: [0.0, 1.0],
     },
     Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        tex_coords: [0.28081453, 0.05060294],
+        position: [1.0, 0.0, -1.0],
+        tex_coords: [1.0, 0.0],
     },
     Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
-        tex_coords: [0.85967, 0.1526709],
-    },
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        tex_coords: [0.9414737, 0.7347359],
+        position: [1.0, 0.0, 1.0],
+        tex_coords: [1.0, 1.0],
     },
 ];
 
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+const INDICES: &[u16] = &[0, 3, 1, 0, 2, 3];
+
+fn create_render_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    color_format: wgpu::TextureFormat,
+    depth_format: Option<wgpu::TextureFormat>,
+    vertex_layouts: &[wgpu::VertexBufferLayout],
+    shader: wgpu::ShaderModuleDescriptor,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(shader);
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Render Pipeline"),
+        layout: Some(layout),
+
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: vertex_layouts,
+            compilation_options: Default::default(),
+        },
+
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: Some(wgpu::BlendState {
+                    alpha: wgpu::BlendComponent::REPLACE,
+                    color: wgpu::BlendComponent::REPLACE,
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+
+        depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
+            format,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+
+        multiview: None,
+        cache: None,
+    })
+}
 
 pub struct State {
     window: Arc<Window>,
@@ -74,6 +134,7 @@ pub struct State {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     camera: Camera,
+    camera_controller: CameraController,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     heightmap_bindgroup: wgpu::BindGroup,
@@ -181,12 +242,14 @@ impl State {
         let camera = Camera {
             eye: Vec3::new(0.0, 2.0, 1.0),
             target: Vec3::new(0.0, 0.0, 0.0),
-            up: Vec3::Z,
+            up: Vec3::Y,
             aspect: config.width as f32 / config.height as f32,
-            fovy: 45.0,
+            fovy: 110.0f32.to_radians(),
             znear: 0.1,
             zfar: 100.0,
         };
+
+        let camera_controller = CameraController::new(0.004);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -218,7 +281,6 @@ impl State {
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -226,73 +288,14 @@ impl State {
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_texture.texture.format(),
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            multiview: None,
-            cache: None,
-        });
-
-        // let terrain_pipeline_layout =
-        //     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        //         label: Some("Terrain pipeline"),
-        //         bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
-        //         push_constant_ranges: &[],
-        //     });
-
-        // let terrain_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        //     label: Some("Terrain Render Pipeline"),
-        //     layout: Some(&terrain_pipeline_layout),
-        //     vertex: wgpu::VertexState {
-        //         module: todo!(),
-        //         entry_point: todo!(),
-        //         compilation_options: todo!(),
-        //         buffers: todo!(),
-        //     },
-        //     primitive: (),
-        //     depth_stencil: (),
-        //     multisample: (),
-        //     fragment: (),
-        //     multiview: (),
-        //     cache: (),
-        // });
+        let render_pipeline = create_render_pipeline(
+            &device,
+            &render_pipeline_layout,
+            config.format,
+            Some(depth_texture.texture.format()),
+            &[Vertex::desc()],
+            wgpu::include_wgsl!("shader.wgsl"),
+        );
 
         Ok(Self {
             window,
@@ -306,6 +309,7 @@ impl State {
             vertex_buffer,
             index_buffer,
             camera,
+            camera_controller,
             camera_buffer,
             camera_bind_group,
             heightmap_bindgroup,
@@ -327,8 +331,19 @@ impl State {
         }
     }
 
+    pub fn update(&mut self) {
+        self.camera_controller.update_camera(&mut self.camera);
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera.build_view_projection()]),
+        );
+    }
+
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
+
+        self.update();
 
         if !self.is_surface_configured {
             return Ok(());
@@ -382,6 +397,13 @@ impl State {
 
         Ok(())
     }
+
+    pub fn handle_key(&mut self, event_loop: &ActiveEventLoop, keycode: KeyCode, pressed: bool) {
+        match (keycode, pressed) {
+            (KeyCode::Escape, true) => event_loop.exit(),
+            _ => self.camera_controller.process_key_events(keycode, pressed),
+        }
+    }
 }
 
 pub struct App {
@@ -391,13 +413,6 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self { state: None }
-    }
-
-    fn handle_key(&self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
-        match (code, is_pressed) {
-            (KeyCode::Escape, true) => event_loop.exit(),
-            _ => {}
-        }
     }
 }
 
@@ -434,11 +449,11 @@ impl ApplicationHandler<State> for App {
                 event:
                     KeyEvent {
                         physical_key: PhysicalKey::Code(code),
-                        state,
+                        state: keystate,
                         ..
                     },
                 ..
-            } => self.handle_key(event_loop, code, state.is_pressed()),
+            } => state.handle_key(event_loop, code, keystate.is_pressed()),
             _ => {}
         }
     }
