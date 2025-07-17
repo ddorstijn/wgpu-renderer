@@ -95,6 +95,7 @@ pub struct State {
     models: Vec<Model>,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
+    instance_bind_group: wgpu::BindGroup,
     camera: Camera,
     camera_controller: CameraController,
     camera_buffer: wgpu::Buffer,
@@ -219,7 +220,31 @@ impl State {
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance buffer"),
             contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let instance_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Instance Bindgroup layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Instance Bind Group"),
+            layout: &instance_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: instance_buffer.as_entire_binding(),
+            }],
         });
 
         let camera_controller = CameraController::new(0.004);
@@ -257,7 +282,11 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
+                bind_group_layouts: &[
+                    &camera_bind_group_layout,
+                    &instance_bind_group_layout,
+                    &texture_bind_group_layout,
+                ],
                 push_constant_ranges: &[],
             });
 
@@ -266,7 +295,7 @@ impl State {
             &render_pipeline_layout,
             config.format,
             Some(depth_texture.texture.format()),
-            &[ModelVertex::desc(), Instance::desc()],
+            &[ModelVertex::desc()],
             wgpu::include_wgsl!("shader.wgsl"),
         );
 
@@ -282,6 +311,7 @@ impl State {
             models,
             instances,
             instance_buffer,
+            instance_bind_group,
             camera,
             camera_controller,
             camera_buffer,
@@ -362,8 +392,8 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.instance_bind_group, &[]);
 
             for model in &self.models {
                 render_pass.draw_model_instanced(model, 0..self.instances.len() as _);

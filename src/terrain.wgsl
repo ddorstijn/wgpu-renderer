@@ -6,12 +6,6 @@ struct Camera {
 @group(0) @binding(0)
 var<uniform> camera: Camera;
 
-struct Instance {
-    transform: mat4x4<f32>,
-}
-@group(1) @binding(0)
-var<storage, read> instances: array<Instance>;
-
 struct InstanceInput {
     @location(5) model_matrix_0: vec4<f32>,
     @location(6) model_matrix_1: vec4<f32>,
@@ -31,8 +25,13 @@ struct VertexOutput {
 }
 
 @vertex
-fn vs_main(model: VertexInput, @builtin(instance_index) instance_idx: u32) -> VertexOutput {
-    let model_matrix = instances[instance_idx].transform;
+fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
+    let model_matrix = mat4x4<f32>(
+        instance.model_matrix_0,
+        instance.model_matrix_1,
+        instance.model_matrix_2,
+        instance.model_matrix_3,
+    );
 
     var out: VertexOutput;
     out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
@@ -41,9 +40,9 @@ fn vs_main(model: VertexInput, @builtin(instance_index) instance_idx: u32) -> Ve
 }
 
 // Fragment shader
-@group(2) @binding(0)
+@group(1) @binding(0)
 var t_diffuse: texture_2d<f32>;
-@group(2) @binding(1)
+@group(1) @binding(1)
 var s_diffuse: sampler;
 
 @fragment
