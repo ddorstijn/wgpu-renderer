@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use image::{GenericImageView, ImageReader};
 
+#[derive(Debug)]
 pub struct Texture {
     #[allow(unused)]
     pub texture: wgpu::Texture,
