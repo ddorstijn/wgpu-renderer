@@ -12,7 +12,7 @@ use winit::{
 
 use crate::{
     camera::{Camera, CameraController},
-    model::{DrawModel, Instance, Model, Vertex},
+    model::{DrawModel, Instance, Model3d, Vertex, VertexAttribute},
     terrain::TerrainSystem,
     util::create_render_pipeline,
 };
@@ -32,15 +32,13 @@ pub struct State {
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
     depth_texture: texture::Texture,
-    models: Vec<Model>,
+    models: Vec<Model3d>,
     instances: Vec<Instance>,
-    instance_buffer: wgpu::Buffer,
     instance_bind_group: wgpu::BindGroup,
     camera: Camera,
     camera_controller: CameraController,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    heightmap_bindgroup: wgpu::BindGroup,
     terrain: TerrainSystem,
 }
 
@@ -48,7 +46,10 @@ impl State {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         let size = window.inner_size();
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            ..Default::default()
+        });
         let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -59,7 +60,10 @@ impl State {
             .await?;
 
         let (device, queue) = adapter
-            .request_device(&wgpu::wgt::DeviceDescriptor::default())
+            .request_device(&wgpu::wgt::DeviceDescriptor {
+                required_features: wgpu::Features::POLYGON_MODE_LINE,
+                ..Default::default()
+            })
             .await?;
 
         let surface_capabilities = surface.get_capabilities(&adapter);
@@ -84,13 +88,6 @@ impl State {
         let depth_texture =
             texture::Texture::create_depth_texture(Some("depth_texture"), &device, &config);
 
-        let heightmap_texture = texture::Texture::load(
-            Some("Diffuse texture"),
-            &device,
-            &queue,
-            Path::new("assets/heightmap.png"),
-        )?;
-
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -114,22 +111,7 @@ impl State {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let heightmap_bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Heightmap Bindgroup"),
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&heightmap_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&heightmap_texture.sampler),
-                },
-            ],
-        });
-
-        let models = vec![Model::load(
+        let models = vec![Model3d::load(
             Path::new("assets/cube.obj"),
             &device,
             &queue,
@@ -143,7 +125,7 @@ impl State {
             aspect: config.width as f32 / config.height as f32,
             fovy: 110.0f32.to_radians(),
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 1000.0,
         };
 
         let instances = vec![
@@ -188,7 +170,7 @@ impl State {
             }],
         });
 
-        let camera_controller = CameraController::new(0.004);
+        let camera_controller = CameraController::new(0.008);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -239,7 +221,10 @@ impl State {
             wgpu::include_wgsl!("shader.wgsl"),
         );
 
-        let terrain = TerrainSystem::new(&device, &queue, &camera_bind_group_layout, config.format);
+        let mut terrain =
+            TerrainSystem::new(&device, &queue, &camera_bind_group_layout, config.format)?;
+
+        terrain.update_terrain_system(&queue, camera.eye);
 
         Ok(Self {
             window,
@@ -252,13 +237,11 @@ impl State {
             depth_texture,
             models,
             instances,
-            instance_buffer,
             instance_bind_group,
             camera,
             camera_controller,
             camera_buffer,
             camera_bind_group,
-            heightmap_bindgroup,
             terrain,
         })
     }
@@ -280,8 +263,8 @@ impl State {
 
     pub fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
-        self.terrain
-            .update_terrain_system(&self.queue, self.camera.eye);
+        // self.terrain
+        //     .update_terrain_system(&self.queue, self.camera.eye);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,

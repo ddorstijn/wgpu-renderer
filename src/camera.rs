@@ -26,6 +26,7 @@ pub struct CameraController {
     pub is_backward_pressed: bool,
     pub is_left_pressed: bool,
     pub is_right_pressed: bool,
+    pub is_shift_pressed: bool,
 }
 
 impl CameraController {
@@ -36,15 +37,17 @@ impl CameraController {
             is_backward_pressed: false,
             is_left_pressed: false,
             is_right_pressed: false,
+            is_shift_pressed: false,
         }
     }
 
     pub fn process_key_events(&mut self, keycode: KeyCode, pressed: bool) {
         match keycode {
-            KeyCode::KeyW | KeyCode::ArrowUp => self.is_forward_pressed = pressed,
-            KeyCode::KeyA | KeyCode::ArrowLeft => self.is_left_pressed = pressed,
-            KeyCode::KeyS | KeyCode::ArrowDown => self.is_backward_pressed = pressed,
-            KeyCode::KeyD | KeyCode::ArrowRight => self.is_right_pressed = pressed,
+            KeyCode::KeyW => self.is_forward_pressed = pressed,
+            KeyCode::KeyA => self.is_left_pressed = pressed,
+            KeyCode::KeyS => self.is_backward_pressed = pressed,
+            KeyCode::KeyD => self.is_right_pressed = pressed,
+            KeyCode::ShiftLeft => self.is_shift_pressed = pressed,
             _ => {}
         }
     }
@@ -54,16 +57,40 @@ impl CameraController {
         let right = camera.up.cross(forward).normalize();
 
         if self.is_forward_pressed {
-            camera.eye += forward * self.speed;
+            match self.is_shift_pressed {
+                true => {
+                    camera.target -= Vec3::Z * self.speed * 10.0;
+                    camera.eye -= Vec3::Z * self.speed * 10.0;
+                }
+                false => camera.eye += forward * self.speed,
+            }
         }
         if self.is_backward_pressed {
-            camera.eye -= forward * self.speed;
+            match self.is_shift_pressed {
+                true => {
+                    camera.target += Vec3::Z * self.speed * 10.0;
+                    camera.eye += Vec3::Z * self.speed * 10.0;
+                }
+                false => camera.eye -= forward * self.speed,
+            }
         }
         if self.is_left_pressed {
-            camera.eye -= right * self.speed;
+            match self.is_shift_pressed {
+                true => {
+                    camera.target += Vec3::X * self.speed * 10.0;
+                    camera.eye += Vec3::X * self.speed * 10.0;
+                }
+                false => camera.eye -= right * self.speed,
+            }
         }
         if self.is_right_pressed {
-            camera.eye += right * self.speed;
+            match self.is_shift_pressed {
+                true => {
+                    camera.target -= Vec3::X * self.speed * 10.0;
+                    camera.eye -= Vec3::X * self.speed * 10.0;
+                }
+                false => camera.eye += right * self.speed,
+            }
         }
     }
 }

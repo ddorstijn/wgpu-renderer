@@ -10,12 +10,12 @@ pub struct Instance {
 }
 
 #[derive(Debug)]
-pub struct Model {
+pub struct Model3d {
     pub meshes: Vec<Mesh>,
     pub materials: Vec<Material>,
 }
 
-impl Model {
+impl Model3d {
     pub fn load(
         path: &Path,
         device: &wgpu::Device,
@@ -126,18 +126,27 @@ impl Model {
 
 #[derive(Debug)]
 pub struct Material {
+    #[allow(unused)]
     pub name: String,
+    #[allow(unused)]
     pub diffuse_texture: texture::Texture,
     pub bind_group: wgpu::BindGroup,
 }
 
 #[derive(Debug)]
 pub struct Mesh {
+    #[allow(unused)]
     pub name: String,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub num_elements: u32,
     pub material: usize,
+}
+
+pub trait VertexAttribute {
+    const ATTRIBS: &'static [wgpu::VertexAttribute];
+
+    fn desc() -> wgpu::VertexBufferLayout<'static>;
 }
 
 #[repr(C)]
@@ -148,14 +157,14 @@ pub struct Vertex {
     pub normal: Vec3,
 }
 
-impl Vertex {
+impl VertexAttribute for Vertex {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
         0 => Float32x3, // position
         1 => Float32x2, // uv
         2 => Float32x3  // normal
     ];
 
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -175,8 +184,8 @@ pub trait DrawModel<'a> {
     );
 
     #[allow(unused)]
-    fn draw_model(&mut self, model: &'a Model);
-    fn draw_model_instanced(&mut self, model: &'a Model, instances: Range<u32>);
+    fn draw_model(&mut self, model: &'a Model3d);
+    fn draw_model_instanced(&mut self, model: &'a Model3d, instances: Range<u32>);
 }
 
 impl<'a, 'b> DrawModel<'b> for wgpu::RenderPass<'a>
@@ -199,11 +208,11 @@ where
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 
-    fn draw_model(&mut self, model: &'b Model) {
+    fn draw_model(&mut self, model: &'b Model3d) {
         self.draw_model_instanced(model, 0..1);
     }
 
-    fn draw_model_instanced(&mut self, model: &'b Model, instances: Range<u32>) {
+    fn draw_model_instanced(&mut self, model: &'b Model3d, instances: Range<u32>) {
         for mesh in &model.meshes {
             let material = &model.materials[mesh.material];
             self.draw_mesh_instanced(mesh, material, instances.clone());
