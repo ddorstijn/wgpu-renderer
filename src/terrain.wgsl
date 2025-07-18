@@ -26,21 +26,21 @@ fn vs_main(
     // Reconstruct 4×4 model matrix
     let model = mat4x4<f32>(m0, m1, m2, m3);
 
-    // 1) Lift 2D (X,Z,0,1)
-    let local = vec4<f32>(a_pos.x, 0.0, a_pos.y, 1.0);
+    // 1) Lift 2D (X,Y,0,1)
+    let local = vec4<f32>(a_pos.x, a_pos.y, 0.0, 1.0);
 
-    // 2) Transform to world XZ
-    let world_xz4 = model * local;
-    let world_xz = world_xz4.xz;
+    // 2) Transform to world XY
+    let world_xy4 = model * local;
+    let world_xy = world_xy4.xy;
 
-    // 3) Sample heightmap at integer XZ
+    // 3) Sample heightmap at integer XY
     let dim = vec2<f32>(textureDimensions(u_heightmap));
-    let uv = (world_xz + vec2<f32>(0.5, 0.5)) / dim;
-    let samp = textureLoad(u_heightmap, vec2<i32>(world_xz), 0).rg;
+    let uv = (world_xy + vec2<f32>(0.5, 0.5)) / dim;
+    let samp = textureLoad(u_heightmap, vec2<i32>(world_xy), 0).rg;
     let height = samp.r * 256.0 + samp.g;
 
-    // 4) Assemble Y-up world position
-    let world_pos3 = vec3<f32>(world_xz.x, 0.0, world_xz.y);
+    // 4) Assemble Z-up world position
+    let world_pos3 = vec3<f32>(world_xy, 0.0);
 
     // 5) Final clip‐space
     out.clip_pos = u_view_proj * vec4<f32>(world_pos3, 1.0);
@@ -55,6 +55,6 @@ fn vs_main(
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color);
     // Simple height‐based shading
-    let shade = in.world_pos.y * 0.001;
+    let shade = in.world_pos.z * 0.001;
     return vec4<f32>(shade, shade, shade, 1.0);
 }

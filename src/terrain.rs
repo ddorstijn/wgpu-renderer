@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::{path::Path, vec};
 
-use glam::{Mat4, Vec2, Vec3, Vec3Swizzles, Vec4};
+use glam::{Mat4, Vec2, Vec3Swizzles, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::{model::VertexAttribute, texture, util::create_render_pipeline};
@@ -65,11 +65,11 @@ pub struct TerrainSystem {
 // Represents a single level of the clipmap. Note it no longer contains buffers.
 struct ClipmapLevel {
     scale: f32,
-    size: Vec2,
+    tile_size: Vec2,
 }
 
 impl TerrainSystem {
-    const TILE_RESOLUTION: u32 = 48;
+    const TILE_RESOLUTION: u32 = 16;
     const PATCH_VERT_RESOLUTION: u32 = Self::TILE_RESOLUTION + 1;
     const CLIPMAP_RESOLUTION: u32 = Self::TILE_RESOLUTION * 4 + 1;
     const CLIPMAP_VERT_RESOLUTION: u32 = Self::CLIPMAP_RESOLUTION + 1;
@@ -153,11 +153,9 @@ impl TerrainSystem {
         // --- Pre‐allocate instance buffers for maximum possible instances ---
         // 4×4 tiles per level × NUM_LEVELS
         let max_tiles = (Self::NUM_LEVELS * 4 * 4) as u64;
-        // 1 filler cross per level
-        let max_cross = Self::NUM_LEVELS as u64;
-        // 1 filler ring per level
+        // 1 filler in total for the first level
+        let max_cross = 1u64;
         let max_filler = Self::NUM_LEVELS as u64;
-        // and so on…
         let max_trim = Self::NUM_LEVELS as u64;
         let max_seam = Self::NUM_LEVELS as u64;
 
@@ -170,14 +168,16 @@ impl TerrainSystem {
             })
         };
 
+        let levels = (0..Self::NUM_LEVELS)
+            .map(|i| {
+                let scale = (1u32 << i) as f32;
+                let tile_size = Vec2::splat((Self::TILE_RESOLUTION << i) as f32);
+                ClipmapLevel { scale, tile_size }
+            })
+            .collect();
+
         Ok(Self {
-            levels: (0..Self::NUM_LEVELS)
-                .map(|i| {
-                    let scale = (1u32 << i) as f32;
-                    let size = Vec2::splat((Self::TILE_RESOLUTION << i) as f32);
-                    ClipmapLevel { scale, size }
-                })
-                .collect(),
+            levels,
 
             tile,
             filler,
@@ -202,7 +202,7 @@ impl TerrainSystem {
         })
     }
 
-    pub fn update_terrain_system(&mut self, queue: &wgpu::Queue, camera_position: Vec3) {
+    pub fn update_terrain_system(&mut self, queue: &wgpu::Queue, camera_position: Vec2) {
         // We'll accumulate instance data here
         let mut tile_data = Vec::new();
         let mut filler_data = Vec::new();
@@ -210,49 +210,54 @@ impl TerrainSystem {
         let mut cross_data = Vec::new();
         let mut seam_data = Vec::new();
 
+        // --- Cross ---
+        {
+            let snap = camera_position.floor(); // integer world‐)xy
+            let xf = Mat4::from_translation(snap.extend(0.0));
+            cross_data.push(InstanceData {
+                transform: xf,
+                color: Vec4::new(0.0, 1.0, 0.0, 1.0),
+            });
+        }
+
         // The main 4×4 tile ring & filler/trim/seam per level
         for (i, level) in self.levels.iter().enumerate() {
-            let s = level.scale;
-            let size = level.size;
+            let s = Vec2::splat(level.scale).extend(1.0);
             // snapped camera for this LOD
-            let snap = (camera_position.xz() / s).floor() * s;
+            let snapped_pos = (camera_position / level.scale).floor() * level.scale;
             // bottom‐left corner of 4×4 grid
-            let base = snap - size * 2.0;
+            let base = snapped_pos - level.tile_size * 2.0;
 
             // --- 4×4 Tiles (skip middle 2×2 if not finest) ---
             for x in 0..4 {
                 for y in 0..4 {
-                    if i != 0 && (1..=2).contains(&x) && (1..=2).contains(&y) {
+                    if i != 0 && (matches!(x, 1 | 2)) && (matches!(y, 1 | 2)) {
                         continue;
                     }
-                    let fill = Vec2::new(x.clamp(0, 1) as f32, y.clamp(0, 1) as f32) * s;
-                    let bl = base + Vec2::new(x as f32, y as f32) * size + fill;
+
+                    let pos = Vec2::new(x as f32, y as f32);
+                    let fill = Vec2::new(
+                        if x >= 2 { 1.0 } else { 0.0 },
+                        if y >= 2 { 1.0 } else { 0.0 },
+                    );
+
+                    let bl = base + pos * level.tile_size + fill;
                     // build transform = T(bl.xy) * S(s)
-                    let scale_matrix = Mat4::from_scale(Vec3::new(s, 1.0, s));
-                    let translation_matrix = Mat4::from_translation(Vec3::new(bl.x, 0.0, bl.y));
+                    let scale_matrix = Mat4::from_scale(s);
+                    let translation_matrix = Mat4::from_translation(bl.extend(0.0));
                     let xf = translation_matrix * scale_matrix;
                     tile_data.push(InstanceData {
                         transform: xf,
-                        color: Vec4::new(1.0, 0.0, 0.0, 1.0),
+                        color: Vec4::new((x % 2) as f32, (y % 2) as f32, 0.0, 1.0),
                     });
                 }
-            }
-
-            // --- Cross ---
-            {
-                let snap = camera_position.xz().floor(); // integer world‐)xy
-                let xf = Mat4::from_translation(Vec3::new(snap.x, 0.0, snap.y));
-                cross_data.push(InstanceData {
-                    transform: xf,
-                    color: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                });
             }
 
             // --- Filler ring ---
             {
                 let snap = (camera_position / level.scale).floor() * level.scale;
 
-                let xf = Mat4::from_translation(Vec3::new(snap.x, 0.0, snap.y));
+                let xf = Mat4::from_translation(snap.extend(0.0));
                 filler_data.push(InstanceData {
                     transform: xf,
                     color: Vec4::new(0.0, 0.0, 1.0, 1.0),
@@ -262,25 +267,26 @@ impl TerrainSystem {
             // --- Seam (not outermost) ---
             if i + 1 < self.levels.len() {
                 let next_s = self.levels[i + 1].scale;
-                let snap2 = (camera_position.xz() / next_s).floor() * next_s;
+                let snap2 = (camera_position / next_s).floor() * next_s;
                 let base2 = snap2 - Vec2::splat((Self::TILE_RESOLUTION << (i + 1)) as f32);
                 // one seam mesh per level
-                let scale_matrix = Mat4::from_scale(Vec3::new(s, 1.0, s));
-                let transform_matrix = Mat4::from_translation(Vec3::new(base2.x, 0.0, base2.y));
+                let scale_matrix = Mat4::from_scale(s);
+                let transform_matrix = Mat4::from_translation(base2.extend(0.0));
                 let xf = transform_matrix * scale_matrix;
                 seam_data.push(InstanceData {
                     transform: xf,
-                    color: Vec4::new(1.0, 1.0, 0.0, 1.0),
+                    color: Vec4::new(1.0, 0.0, 0.0, 1.0),
                 });
             }
 
             // --- Trim (one per level except outermost) ---
             if i + 1 < self.levels.len() {
-                let d = camera_position.xz() - next_snap;
+                let next_s = self.levels[i + 1].scale;
+                let d = camera_position - next_s;
 
                 // 1) Decide which half of that outer cell the camera lies in:
-                let in_right_half = d.x >= scale;
-                let in_top_half = d.y >= scale;
+                let in_right_half = d.x >= level.scale;
+                let in_top_half = d.y >= level.scale;
 
                 // 2) We actually want to place the trim in the *opposite* corner
                 //    so we flip those booleans:
@@ -293,28 +299,19 @@ impl TerrainSystem {
                 // 4) Hardcode your 4 rotations so there’s no floating-point wiggle
                 //    (identity, 90°, 270°, 180° for example)
                 let rotations = [
-                    Mat4::IDENTITY,                   // 00: bottom-left → bottom-left
-                    Mat4::from_rotation_z(-PI * 0.5), // 01: bottom-left → bottom-right
-                    Mat4::from_rotation_z(PI * 0.5),  // 10: bottom-left → top-left
-                    Mat4::from_rotation_z(PI),        // 11: bottom-left → top-right
+                    Mat4::IDENTITY,                                     // 00: bottom-left → bottom-left
+                    Mat4::from_rotation_y(-std::f32::consts::PI * 0.5), // 01: bottom-left → bottom-right
+                    Mat4::from_rotation_y(std::f32::consts::PI * 0.5), // 10: bottom-left → top-left
+                    Mat4::from_rotation_y(std::f32::consts::PI), // 11: bottom-left → top-right
                 ];
 
                 // 5) Build your final transform in the correct order:
                 //    scale first (on XZ), then translate
-                let S = Mat4::from_scale(Vec3::new(scale, 1.0, scale));
-                let T = Mat4::from_translation(Vec3::new(tile_center.x, 0.0, tile_center.y));
-                let xf = T * S * rotations[rot_idx as usize];
-
-                // push it into your trim_data
-                trim_data.push(InstanceData {
-                    transform: xf.to_cols_array_2d(),
-                });
-
-                let center = snap + Vec2::splat(0.5 * s);
-                // compute rotation index (0..3) here if you want; for brevity assume ID
-                let scale_matrix = Mat4::from_scale(Vec3::new(s, 1.0, s));
-                let tramslation_matrix = Mat4::from_translation(Vec3::new(center.x, 0.0, center.y));
-                let xf = tramslation_matrix * scale_matrix;
+                //    push it into your trim_data
+                let center = snapped_pos + 0.5 * s.xy();
+                let scale_matrix = Mat4::from_scale(s);
+                let tramslation_matrix = Mat4::from_translation(center.extend(0.0));
+                let xf = tramslation_matrix * scale_matrix * rotations[rot_idx as usize];
                 trim_data.push(InstanceData {
                     transform: xf,
                     color: Vec4::new(0.0, 1.0, 1.0, 1.0),
@@ -375,7 +372,7 @@ impl TerrainSystem {
         rpass.set_index_buffer(self.trim.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         rpass.draw_indexed(0..self.trim.index_count, 0, 0..self.trim_count);
 
-        // DRAW FILLER INSTANCES (if any)
+        // DRAW FILLER INSTANCES
         rpass.set_vertex_buffer(0, self.filler.vertex_buffer.slice(..));
         rpass.set_vertex_buffer(1, self.filler_instances.slice(..));
         rpass.set_index_buffer(
@@ -385,7 +382,6 @@ impl TerrainSystem {
         rpass.draw_indexed(0..self.filler.index_count, 0, 0..self.filler_count);
     }
 
-    // generate tile mesh
     fn generate_tile_mesh(device: &wgpu::Device) -> Mesh2d {
         let mut vertices = Vec::with_capacity(Self::PATCH_VERT_RESOLUTION.pow(2) as usize);
         for y in 0..Self::PATCH_VERT_RESOLUTION {

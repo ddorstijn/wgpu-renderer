@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec3Swizzles};
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -119,9 +119,9 @@ impl State {
         )?];
 
         let camera = Camera {
-            eye: Vec3::new(0.0, 2.0, 1.0),
+            eye: Vec3::new(0.0, 0.01, 1.0),
             target: Vec3::new(0.0, 0.0, 0.0),
-            up: Vec3::Y,
+            up: Vec3::Z,
             aspect: config.width as f32 / config.height as f32,
             fovy: 110.0f32.to_radians(),
             znear: 0.1,
@@ -221,10 +221,11 @@ impl State {
             wgpu::include_wgsl!("shader.wgsl"),
         );
 
+        #[allow(unused_mut)]
         let mut terrain =
             TerrainSystem::new(&device, &queue, &camera_bind_group_layout, config.format)?;
 
-        terrain.update_terrain_system(&queue, camera.eye);
+        // terrain.update_terrain_system(&queue, camera.eye);
 
         Ok(Self {
             window,
@@ -263,8 +264,8 @@ impl State {
 
     pub fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
-        // self.terrain
-        //     .update_terrain_system(&self.queue, self.camera.eye);
+        self.terrain
+            .update_terrain_system(&self.queue, self.camera.eye.xy());
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
