@@ -35,8 +35,13 @@ impl Model3d {
         for m in obj_materials? {
             let material_path_buf = path.parent().unwrap().join(&m.diffuse_texture.unwrap());
             let material_path = material_path_buf.as_path();
-            let diffuse_texture =
-                crate::texture::Texture::load(Some(m.name.as_str()), device, queue, material_path)?;
+            let diffuse_texture = crate::texture::Texture::load(
+                Some(m.name.as_str()),
+                device,
+                queue,
+                material_path,
+                wgpu::TextureFormat::Rg8Snorm,
+            )?;
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout,

@@ -42,8 +42,7 @@ impl VertexAttribute for InstanceData {
 
 // In your main render state or engine structure
 pub struct TerrainSystem {
-    levels: Vec<ClipmapLevel>,
-
+    // Meshes
     tile: Mesh2d,
     filler: Mesh2d,
     trim: Mesh2d,
@@ -69,12 +68,6 @@ pub struct TerrainSystem {
     seam_count: u32,
 }
 
-// Represents a single level of the clipmap. Note it no longer contains buffers.
-struct ClipmapLevel {
-    scale: f32,
-    tile_size: Vec2,
-}
-
 impl TerrainSystem {
     const TILE_RESOLUTION: u32 = 8;
     const PATCH_VERT_RESOLUTION: u32 = Self::TILE_RESOLUTION + 1;
@@ -93,7 +86,16 @@ impl TerrainSystem {
             device,
             queue,
             Path::new("assets/heightmap_big.png"),
+            wgpu::TextureFormat::Bc5RgUnorm,
         )?;
+
+        let heightmap_scaling = 255.0;
+        let heightmap_scaling_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Heightmap Scaling Buffer"),
+                contents: bytemuck::cast_slice(&[heightmap_scaling]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let tile = Self::generate_tile_mesh(device);
         let filler = Self::generate_filler_mesh(device);
@@ -122,6 +124,16 @@ impl TerrainSystem {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -137,6 +149,12 @@ impl TerrainSystem {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&heightmap.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(
+                        heightmap_scaling_buffer.as_entire_buffer_binding(),
+                    ),
                 },
             ],
         });
@@ -175,17 +193,7 @@ impl TerrainSystem {
             })
         };
 
-        let levels = (0..Self::NUM_LEVELS)
-            .map(|i| {
-                let scale = (1u32 << i) as f32;
-                let tile_size = Vec2::splat((Self::TILE_RESOLUTION << i) as f32);
-                ClipmapLevel { scale, tile_size }
-            })
-            .collect();
-
         Ok(Self {
-            levels,
-
             tile,
             filler,
             trim,
@@ -228,12 +236,15 @@ impl TerrainSystem {
         }
 
         // The main 4×4 tile ring & filler/trim/seam per level
-        for (i, level) in self.levels.iter().enumerate() {
-            let v_scale = Vec2::splat(level.scale).extend(1.0);
+        for i in 0..Self::NUM_LEVELS {
+            let scale = (1u32 << i) as f32;
+            let tile_size = Vec2::splat((Self::TILE_RESOLUTION << i) as f32);
+
+            let v_scale = Vec2::splat(scale).extend(1.0);
             // snapped camera for this LOD
-            let snapped_pos = (camera_position / level.scale).floor() * level.scale;
+            let snapped_pos = (camera_position / scale).floor() * scale;
             // bottom‐left corner of 4×4 grid
-            let base = snapped_pos - level.tile_size * 2.0;
+            let base = snapped_pos - tile_size * 2.0;
 
             // --- 4×4 Tiles (skip middle 2×2 if not finest) ---
             for x in 0..4 {
@@ -246,9 +257,9 @@ impl TerrainSystem {
                     let fill = Vec2::new(
                         if x >= 2 { 1.0 } else { 0.0 },
                         if y >= 2 { 1.0 } else { 0.0 },
-                    ) * level.scale;
+                    ) * scale;
 
-                    let bl = base + pos * level.tile_size + fill;
+                    let bl = base + pos * tile_size + fill;
                     let transform = Mat4::from_scale_rotation_translation(
                         v_scale,
                         Quat::IDENTITY,
@@ -263,7 +274,7 @@ impl TerrainSystem {
 
             // --- Filler ring ---
             {
-                let snap = (camera_position / level.scale).floor() * level.scale;
+                let snap = (camera_position / scale).floor() * scale;
 
                 let transform = Mat4::from_scale_rotation_translation(
                     v_scale,
@@ -277,8 +288,8 @@ impl TerrainSystem {
             }
 
             // Trim and seam are not generated for the finest level
-            if i < self.levels.len() - 1 {
-                let next_scale = level.scale * 2.0;
+            if i < Self::NUM_LEVELS - 1 {
+                let next_scale = scale * 2.0;
                 let next_snap = (camera_position / next_scale).floor() * next_scale;
 
                 // --- Seam ---
@@ -296,8 +307,7 @@ impl TerrainSystem {
 
                 // --- Trim ---
                 let d = camera_position - next_snap;
-                let r = (if d.x < level.scale { 2 } else { 0 })
-                    | (if d.y < level.scale { 1 } else { 0 });
+                let r = (if d.x < scale { 2 } else { 0 }) | (if d.y < scale { 1 } else { 0 });
 
                 let center = snapped_pos + 0.5 * v_scale.xy();
                 let transform = Mat4::from_scale_rotation_translation(

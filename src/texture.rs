@@ -3,6 +3,8 @@ use std::path::Path;
 use anyhow::Result;
 use image::{GenericImageView, ImageReader};
 
+use crate::texture;
+
 #[derive(Debug)]
 pub struct Texture {
     #[allow(unused)]
@@ -17,6 +19,7 @@ impl Texture {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: &Path,
+        texture_format: wgpu::TextureFormat,
     ) -> Result<Self> {
         let img = ImageReader::open(path)?.decode()?;
         let rgba = img.to_rgba8();
@@ -33,7 +36,7 @@ impl Texture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: texture_format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

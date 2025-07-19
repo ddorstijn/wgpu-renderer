@@ -2,8 +2,9 @@
 
 @group(0) @binding(0) var<uniform> u_view_proj : mat4x4<f32>;
 
-@group(1) @binding(0) var u_heightmap : texture_2d<f32>;
-@group(1) @binding(1) var u_sampler   : sampler;
+@group(1) @binding(0) var u_heightmap           : texture_2d<f32>;
+@group(1) @binding(1) var u_sampler             : sampler;
+@group(1) @binding(2) var u_heightmap_scale     : vec4<f32>;
 
 struct VSOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -37,7 +38,7 @@ fn vs_main(
     let dim = vec2<f32>(textureDimensions(u_heightmap));
     let uv = (world_xy + vec2<f32>(0.5)) / dim;
     let samp = textureLoad(u_heightmap, vec2<i32>(world_xy), 0).rg;
-    let height = samp.r * 256.0 + samp.g;
+    let height = samp.r * u_heightmap_scale + samp.g;
 
     // 4) Assemble Z-up world position
     let world_pos3 = vec3<f32>(world_xy, height);
