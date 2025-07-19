@@ -170,7 +170,7 @@ impl State {
             }],
         });
 
-        let camera_controller = CameraController::new(0.008);
+        let camera_controller = CameraController::new(0.005);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -225,7 +225,7 @@ impl State {
         let mut terrain =
             TerrainSystem::new(&device, &queue, &camera_bind_group_layout, config.format)?;
 
-        // terrain.update_terrain_system(&queue, camera.eye);
+        terrain.update_terrain_system(&queue, camera.eye.xy());
 
         Ok(Self {
             window,

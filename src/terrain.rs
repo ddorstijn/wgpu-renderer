@@ -1,9 +1,16 @@
 use std::{path::Path, vec};
 
-use glam::{Mat4, Vec2, Vec3Swizzles, Vec4};
+use glam::{Mat4, Quat, Vec2, Vec3Swizzles, Vec4, quat};
 use wgpu::util::DeviceExt;
 
 use crate::{model::VertexAttribute, texture, util::create_render_pipeline};
+
+const ROTATIONS: [Quat; 4] = [
+    Quat::IDENTITY,
+    quat(0.0, 0.0, 0.70710677, -0.70710677), // 270 degrees
+    quat(0.0, 0.0, 0.70710677, 0.70710677),  // 90 degrees
+    quat(0.0, 0.0, 1.0, 0.0),                // 180 degrees
+];
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -69,7 +76,7 @@ struct ClipmapLevel {
 }
 
 impl TerrainSystem {
-    const TILE_RESOLUTION: u32 = 16;
+    const TILE_RESOLUTION: u32 = 8;
     const PATCH_VERT_RESOLUTION: u32 = Self::TILE_RESOLUTION + 1;
     const CLIPMAP_RESOLUTION: u32 = Self::TILE_RESOLUTION * 4 + 1;
     const CLIPMAP_VERT_RESOLUTION: u32 = Self::CLIPMAP_RESOLUTION + 1;
@@ -85,7 +92,7 @@ impl TerrainSystem {
             Some("Terrain Heightmap"),
             device,
             queue,
-            Path::new("assets/heightmap.png"),
+            Path::new("assets/heightmap_big.png"),
         )?;
 
         let tile = Self::generate_tile_mesh(device);
@@ -216,13 +223,13 @@ impl TerrainSystem {
             let xf = Mat4::from_translation(snap.extend(0.0));
             cross_data.push(InstanceData {
                 transform: xf,
-                color: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                color: Vec4::new(0.0, 0.0, 0.0, 1.0),
             });
         }
 
         // The main 4×4 tile ring & filler/trim/seam per level
         for (i, level) in self.levels.iter().enumerate() {
-            let s = Vec2::splat(level.scale).extend(1.0);
+            let v_scale = Vec2::splat(level.scale).extend(1.0);
             // snapped camera for this LOD
             let snapped_pos = (camera_position / level.scale).floor() * level.scale;
             // bottom‐left corner of 4×4 grid
@@ -239,15 +246,16 @@ impl TerrainSystem {
                     let fill = Vec2::new(
                         if x >= 2 { 1.0 } else { 0.0 },
                         if y >= 2 { 1.0 } else { 0.0 },
-                    );
+                    ) * level.scale;
 
                     let bl = base + pos * level.tile_size + fill;
-                    // build transform = T(bl.xy) * S(s)
-                    let scale_matrix = Mat4::from_scale(s);
-                    let translation_matrix = Mat4::from_translation(bl.extend(0.0));
-                    let xf = translation_matrix * scale_matrix;
+                    let transform = Mat4::from_scale_rotation_translation(
+                        v_scale,
+                        Quat::IDENTITY,
+                        bl.extend(0.0),
+                    );
                     tile_data.push(InstanceData {
-                        transform: xf,
+                        transform,
                         color: Vec4::new((x % 2) as f32, (y % 2) as f32, 0.0, 1.0),
                     });
                 }
@@ -257,63 +265,49 @@ impl TerrainSystem {
             {
                 let snap = (camera_position / level.scale).floor() * level.scale;
 
-                let xf = Mat4::from_translation(snap.extend(0.0));
+                let transform = Mat4::from_scale_rotation_translation(
+                    v_scale,
+                    Quat::IDENTITY,
+                    snap.extend(0.0),
+                );
                 filler_data.push(InstanceData {
-                    transform: xf,
+                    transform,
                     color: Vec4::new(0.0, 0.0, 1.0, 1.0),
                 });
             }
 
-            // --- Seam (not outermost) ---
-            if i + 1 < self.levels.len() {
-                let next_s = self.levels[i + 1].scale;
-                let snap2 = (camera_position / next_s).floor() * next_s;
-                let base2 = snap2 - Vec2::splat((Self::TILE_RESOLUTION << (i + 1)) as f32);
-                // one seam mesh per level
-                let scale_matrix = Mat4::from_scale(s);
-                let transform_matrix = Mat4::from_translation(base2.extend(0.0));
-                let xf = transform_matrix * scale_matrix;
+            // Trim and seam are not generated for the finest level
+            if i < self.levels.len() - 1 {
+                let next_scale = level.scale * 2.0;
+                let next_snap = (camera_position / next_scale).floor() * next_scale;
+
+                // --- Seam ---
+                let next_base = next_snap - Vec2::splat((Self::TILE_RESOLUTION << (i + 1)) as f32);
+                let transform = Mat4::from_scale_rotation_translation(
+                    v_scale,
+                    Quat::IDENTITY,
+                    next_base.extend(0.0),
+                );
+
                 seam_data.push(InstanceData {
-                    transform: xf,
+                    transform,
                     color: Vec4::new(1.0, 0.0, 0.0, 1.0),
                 });
-            }
 
-            // --- Trim (one per level except outermost) ---
-            if i + 1 < self.levels.len() {
-                let next_s = self.levels[i + 1].scale;
-                let d = camera_position - next_s;
+                // --- Trim ---
+                let d = camera_position - next_snap;
+                let r = (if d.x < level.scale { 2 } else { 0 })
+                    | (if d.y < level.scale { 1 } else { 0 });
 
-                // 1) Decide which half of that outer cell the camera lies in:
-                let in_right_half = d.x >= level.scale;
-                let in_top_half = d.y >= level.scale;
+                let center = snapped_pos + 0.5 * v_scale.xy();
+                let transform = Mat4::from_scale_rotation_translation(
+                    v_scale,
+                    ROTATIONS[r],
+                    center.extend(0.0),
+                );
 
-                // 2) We actually want to place the trim in the *opposite* corner
-                //    so we flip those booleans:
-                let x_flip = (!in_right_half) as u32; // bottom-half => put trim on top
-                let y_flip = (!in_top_half) as u32; // left-half   => put trim on right
-
-                // 3) Pack into a 0..3 index (bit2 = x, bit1 = y)
-                let rot_idx = (x_flip << 1) | y_flip;
-
-                // 4) Hardcode your 4 rotations so there’s no floating-point wiggle
-                //    (identity, 90°, 270°, 180° for example)
-                let rotations = [
-                    Mat4::IDENTITY,                                     // 00: bottom-left → bottom-left
-                    Mat4::from_rotation_y(-std::f32::consts::PI * 0.5), // 01: bottom-left → bottom-right
-                    Mat4::from_rotation_y(std::f32::consts::PI * 0.5), // 10: bottom-left → top-left
-                    Mat4::from_rotation_y(std::f32::consts::PI), // 11: bottom-left → top-right
-                ];
-
-                // 5) Build your final transform in the correct order:
-                //    scale first (on XZ), then translate
-                //    push it into your trim_data
-                let center = snapped_pos + 0.5 * s.xy();
-                let scale_matrix = Mat4::from_scale(s);
-                let tramslation_matrix = Mat4::from_translation(center.extend(0.0));
-                let xf = tramslation_matrix * scale_matrix * rotations[rot_idx as usize];
                 trim_data.push(InstanceData {
-                    transform: xf,
+                    transform,
                     color: Vec4::new(0.0, 1.0, 1.0, 1.0),
                 });
             }

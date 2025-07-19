@@ -35,12 +35,12 @@ fn vs_main(
 
     // 3) Sample heightmap at integer XY
     let dim = vec2<f32>(textureDimensions(u_heightmap));
-    let uv = (world_xy + vec2<f32>(0.5, 0.5)) / dim;
+    let uv = (world_xy + vec2<f32>(0.5)) / dim;
     let samp = textureLoad(u_heightmap, vec2<i32>(world_xy), 0).rg;
     let height = samp.r * 256.0 + samp.g;
 
     // 4) Assemble Z-up world position
-    let world_pos3 = vec3<f32>(world_xy, 0.0);
+    let world_pos3 = vec3<f32>(world_xy, height);
 
     // 5) Final clip‐space
     out.clip_pos = u_view_proj * vec4<f32>(world_pos3, 1.0);
@@ -53,7 +53,7 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color);
+    // return vec4<f32>(in.color);
     // Simple height‐based shading
     let shade = in.world_pos.z * 0.001;
     return vec4<f32>(shade, shade, shade, 1.0);

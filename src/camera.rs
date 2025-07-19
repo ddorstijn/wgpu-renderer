@@ -13,8 +13,8 @@ pub struct Camera {
 
 impl Camera {
     pub fn build_view_projection(&self) -> Mat4 {
-        let view = Mat4::look_at_rh(self.eye, self.target, self.up);
-        let proj = Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar);
+        let view = Mat4::look_at_lh(self.eye, self.target, self.up);
+        let proj = Mat4::perspective_lh(self.fovy, self.aspect, self.znear, self.zfar);
 
         proj * view
     }
@@ -26,6 +26,8 @@ pub struct CameraController {
     pub is_backward_pressed: bool,
     pub is_left_pressed: bool,
     pub is_right_pressed: bool,
+    pub is_space_pressed: bool,
+    pub is_control_pressed: bool,
     pub is_shift_pressed: bool,
 }
 
@@ -37,6 +39,8 @@ impl CameraController {
             is_backward_pressed: false,
             is_left_pressed: false,
             is_right_pressed: false,
+            is_space_pressed: false,
+            is_control_pressed: false,
             is_shift_pressed: false,
         }
     }
@@ -47,50 +51,44 @@ impl CameraController {
             KeyCode::KeyA => self.is_left_pressed = pressed,
             KeyCode::KeyS => self.is_backward_pressed = pressed,
             KeyCode::KeyD => self.is_right_pressed = pressed,
+            KeyCode::Space => self.is_space_pressed = pressed,
+            KeyCode::ControlLeft => self.is_control_pressed = pressed,
             KeyCode::ShiftLeft => self.is_shift_pressed = pressed,
             _ => {}
         }
     }
 
     pub fn update_camera(&self, camera: &mut Camera) {
-        let forward = (camera.target - camera.eye).normalize();
-        let right = camera.up.cross(forward).normalize();
+        let forward = Vec3::Y; //(camera.target - camera.eye).normalize();
+        let right = Vec3::X; //camera.up.cross(forward).normalize();
+        let up = Vec3::Z; //camera.up;
+
+        let modifier = if self.is_shift_pressed { 10.0 } else { 1.0 };
 
         if self.is_forward_pressed {
-            match self.is_shift_pressed {
-                true => {
-                    camera.target -= Vec3::Y * self.speed;
-                    camera.eye -= Vec3::Y * self.speed;
-                }
-                false => camera.eye += forward * self.speed,
-            }
+            camera.target -= forward * self.speed * modifier;
+            camera.eye -= forward * self.speed * modifier;
         }
         if self.is_backward_pressed {
-            match self.is_shift_pressed {
-                true => {
-                    camera.target += Vec3::Y * self.speed;
-                    camera.eye += Vec3::Y * self.speed;
-                }
-                false => camera.eye -= forward * self.speed * 10.0,
-            }
+            camera.target += forward * self.speed * modifier;
+            camera.eye += forward * self.speed * modifier;
         }
         if self.is_left_pressed {
-            match self.is_shift_pressed {
-                true => {
-                    camera.target += Vec3::X * self.speed;
-                    camera.eye += Vec3::X * self.speed;
-                }
-                false => camera.eye -= right * self.speed * 0.1,
-            }
+            camera.target -= right * self.speed * modifier;
+            camera.eye -= right * self.speed * modifier;
         }
         if self.is_right_pressed {
-            match self.is_shift_pressed {
-                true => {
-                    camera.target -= Vec3::X * self.speed;
-                    camera.eye -= Vec3::X * self.speed;
-                }
-                false => camera.eye += right * self.speed * 0.1,
-            }
+            camera.target += right * self.speed * modifier;
+            camera.eye += right * self.speed * modifier;
+        }
+
+        if self.is_space_pressed {
+            camera.target += up * self.speed * modifier;
+            camera.eye += up * self.speed * modifier;
+        }
+        if self.is_control_pressed {
+            camera.target -= up * self.speed * modifier;
+            camera.eye -= up * self.speed * modifier;
         }
     }
 }
