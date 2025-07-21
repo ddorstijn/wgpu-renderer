@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use glam::{Mat4, Quat, Vec3, Vec3Swizzles};
+use glam::{Mat4, Vec3, Vec3Swizzles};
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -123,13 +123,13 @@ impl State {
         )?];
 
         let camera = Camera {
-            eye: Vec3::new(0.0, 0.01, 90.0),
-            target: Vec3::new(0.0, 0.0, 0.0),
+            eye: Vec3::new(0.0, 0.0001, 10.0),
+            target: Vec3::new(0.0, 0.0, 00.0),
             up: Vec3::Z,
             aspect: config.width as f32 / config.height as f32,
-            fovy: 110.0f32.to_radians(),
+            fovy: 45.0f32.to_radians(),
             znear: 0.1,
-            zfar: 1000.0,
+            zfar: 10000.0,
         };
 
         let instances = vec![
@@ -137,10 +137,7 @@ impl State {
                 transform: Mat4::IDENTITY,
             },
             Instance {
-                transform: Mat4::from_rotation_translation(
-                    Quat::IDENTITY,
-                    Vec3::new(1.0, 1.0, 1.0),
-                ),
+                transform: Mat4::from_translation(Vec3::new(3.0, 0.0, 0.0)),
             },
         ];
 
@@ -174,7 +171,7 @@ impl State {
             }],
         });
 
-        let camera_controller = CameraController::new(100.0);
+        let camera_controller = CameraController::new(250.0);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -231,7 +228,7 @@ impl State {
             &queue,
             &camera_bind_group_layout,
             config.format,
-            Path::new("assets/test.png"),
+            Path::new("assets/heightmap_big.png"),
         )?;
 
         terrain.update_terrain_system(&queue, camera.eye.xy());

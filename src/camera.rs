@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use glam::{Mat4, Vec3};
 use winit::keyboard::KeyCode;
 
@@ -62,10 +60,10 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&self, camera: &mut Camera, delta_time: Duration) {
-        let forward = Vec3::Y; //(camera.target - camera.eye).normalize();
-        let right = Vec3::X; //camera.up.cross(forward).normalize();
-        let up = Vec3::Z; //camera.up;
+    pub fn update_camera(&self, camera: &mut Camera, delta_time: std::time::Duration) {
+        let forward = Vec3::Y;
+        let right = Vec3::X;
+        let up = Vec3::Z;
 
         let modifier = if self.is_shift_pressed {
             SPEED_MODIFIER
@@ -91,12 +89,12 @@ impl CameraController {
         }
 
         if self.is_space_pressed {
-            camera.target += up * self.speed * modifier * delta_time.as_secs_f32();
-            camera.eye += up * self.speed * modifier * delta_time.as_secs_f32();
+            camera.target += up * self.speed * modifier * 0.75 * delta_time.as_secs_f32();
+            camera.eye += up * self.speed * modifier * 0.75 * delta_time.as_secs_f32();
         }
         if self.is_control_pressed {
-            camera.target -= up * self.speed * modifier * delta_time.as_secs_f32();
-            camera.eye -= up * self.speed * modifier * delta_time.as_secs_f32();
+            camera.target -= up * self.speed * modifier * 0.75 * delta_time.as_secs_f32();
+            camera.eye -= up * self.speed * modifier * 0.75 * delta_time.as_secs_f32();
         }
     }
 }

@@ -69,11 +69,11 @@ pub struct TerrainSystem {
 }
 
 impl TerrainSystem {
-    const TILE_RESOLUTION: u32 = 8;
+    const TILE_RESOLUTION: u32 = 64;
     const PATCH_VERT_RESOLUTION: u32 = Self::TILE_RESOLUTION + 1;
     const CLIPMAP_RESOLUTION: u32 = Self::TILE_RESOLUTION * 4 + 1;
     const CLIPMAP_VERT_RESOLUTION: u32 = Self::CLIPMAP_RESOLUTION + 1;
-    const NUM_LEVELS: usize = 7;
+    const NUM_LEVELS: usize = 10;
 
     pub fn new(
         device: &wgpu::Device,

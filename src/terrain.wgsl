@@ -1,6 +1,7 @@
 // Heightmap height resolution 1 = 1m, 10 = 1dm, 100 = 1cm
-const HEIGHT_RESOLUTION: f32 = 100.0; 
-const WIDTH_RESOLUTION = 0.5; // 2m per texel
+const HEIGHT_SCALE: f32 = 1000.0; 
+// Heightmap width resolution 1 = 1m, 10 = 1dm, 100 = 1cm
+const WIDTH_SCALE: f32 = 2.0; 
 
 @group(0) @binding(0) var<uniform> u_view_proj : mat4x4<f32>;
 
@@ -36,8 +37,8 @@ fn vs_main(
     let world_xy = world_xy4.xy;
 
     // 3) Sample heightmap at integer XY
-    let uv = world_xy * WIDTH_RESOLUTION + vec2<f32>(textureDimensions(u_heightmap)) * 0.5;
-    let height = f32(textureLoad(u_heightmap, vec2<i32>(uv), 0).r) / HEIGHT_RESOLUTION;
+    let uv = world_xy / WIDTH_SCALE + vec2<f32>(textureDimensions(u_heightmap)) * 0.5;
+    let height = f32(textureLoad(u_heightmap, vec2<i32>(uv), 0).r) / HEIGHT_SCALE;
     // 4) Assemble Z-up world position
     let world_pos3 = vec3<f32>(world_xy, height);
 
@@ -52,7 +53,6 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-    // return vec4<f32>(in.color);
     // Simple height‐based shading
     let shade = in.world_pos.z * 0.001;
     return vec4<f32>(shade, shade, shade, 1.0);
