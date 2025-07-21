@@ -1,5 +1,9 @@
+use std::time::Duration;
+
 use glam::{Mat4, Vec3};
 use winit::keyboard::KeyCode;
+
+const SPEED_MODIFIER: f32 = 50.0;
 
 pub struct Camera {
     pub eye: Vec3,
@@ -58,37 +62,41 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&self, camera: &mut Camera) {
+    pub fn update_camera(&self, camera: &mut Camera, delta_time: Duration) {
         let forward = Vec3::Y; //(camera.target - camera.eye).normalize();
         let right = Vec3::X; //camera.up.cross(forward).normalize();
         let up = Vec3::Z; //camera.up;
 
-        let modifier = if self.is_shift_pressed { 10.0 } else { 1.0 };
+        let modifier = if self.is_shift_pressed {
+            SPEED_MODIFIER
+        } else {
+            1.0
+        };
 
         if self.is_forward_pressed {
-            camera.target -= forward * self.speed * modifier;
-            camera.eye -= forward * self.speed * modifier;
+            camera.target -= forward * self.speed * modifier * delta_time.as_secs_f32();
+            camera.eye -= forward * self.speed * modifier * delta_time.as_secs_f32();
         }
         if self.is_backward_pressed {
-            camera.target += forward * self.speed * modifier;
-            camera.eye += forward * self.speed * modifier;
+            camera.target += forward * self.speed * modifier * delta_time.as_secs_f32();
+            camera.eye += forward * self.speed * modifier * delta_time.as_secs_f32();
         }
         if self.is_left_pressed {
-            camera.target -= right * self.speed * modifier;
-            camera.eye -= right * self.speed * modifier;
+            camera.target -= right * self.speed * modifier * delta_time.as_secs_f32();
+            camera.eye -= right * self.speed * modifier * delta_time.as_secs_f32();
         }
         if self.is_right_pressed {
-            camera.target += right * self.speed * modifier;
-            camera.eye += right * self.speed * modifier;
+            camera.target += right * self.speed * modifier * delta_time.as_secs_f32();
+            camera.eye += right * self.speed * modifier * delta_time.as_secs_f32();
         }
 
         if self.is_space_pressed {
-            camera.target += up * self.speed * modifier;
-            camera.eye += up * self.speed * modifier;
+            camera.target += up * self.speed * modifier * delta_time.as_secs_f32();
+            camera.eye += up * self.speed * modifier * delta_time.as_secs_f32();
         }
         if self.is_control_pressed {
-            camera.target -= up * self.speed * modifier;
-            camera.eye -= up * self.speed * modifier;
+            camera.target -= up * self.speed * modifier * delta_time.as_secs_f32();
+            camera.eye -= up * self.speed * modifier * delta_time.as_secs_f32();
         }
     }
 }

@@ -80,23 +80,12 @@ impl TerrainSystem {
         queue: &wgpu::Queue,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         render_format: wgpu::TextureFormat,
+        heightmap_path: &Path,
     ) -> anyhow::Result<Self> {
-        let heightmap = texture::Texture::load(
-            Some("Terrain Heightmap"),
-            device,
-            queue,
-            Path::new("assets/heightmap_big.png"),
-            wgpu::TextureFormat::Bc5RgUnorm,
-        )?;
+        let heightmap =
+            texture::Texture::from_heightmap("Heightmap", device, queue, heightmap_path)?;
 
-        let heightmap_scaling = 255.0;
-        let heightmap_scaling_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Heightmap Scaling Buffer"),
-                contents: bytemuck::cast_slice(&[heightmap_scaling]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-
+        // Convert to a vec of f16
         let tile = Self::generate_tile_mesh(device);
         let filler = Self::generate_filler_mesh(device);
         let trim = Self::generate_trim_mesh(device);
@@ -112,7 +101,7 @@ impl TerrainSystem {
                         binding: 0,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            sample_type: wgpu::TextureSampleType::Uint,
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
@@ -122,16 +111,6 @@ impl TerrainSystem {
                         binding: 1,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
                         count: None,
                     },
                 ],
@@ -149,12 +128,6 @@ impl TerrainSystem {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&heightmap.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(
-                        heightmap_scaling_buffer.as_entire_buffer_binding(),
-                    ),
                 },
             ],
         });

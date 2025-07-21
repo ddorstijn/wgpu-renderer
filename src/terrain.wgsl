@@ -1,10 +1,11 @@
-// terrain_instanced_yup.wgsl
+// Heightmap height resolution 1 = 1m, 10 = 1dm, 100 = 1cm
+const HEIGHT_RESOLUTION: f32 = 100.0; 
+const WIDTH_RESOLUTION = 0.5; // 2m per texel
 
 @group(0) @binding(0) var<uniform> u_view_proj : mat4x4<f32>;
 
-@group(1) @binding(0) var u_heightmap           : texture_2d<f32>;
+@group(1) @binding(0) var u_heightmap           : texture_2d<u32>;
 @group(1) @binding(1) var u_sampler             : sampler;
-@group(1) @binding(2) var u_heightmap_scale     : vec4<f32>;
 
 struct VSOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -35,11 +36,8 @@ fn vs_main(
     let world_xy = world_xy4.xy;
 
     // 3) Sample heightmap at integer XY
-    let dim = vec2<f32>(textureDimensions(u_heightmap));
-    let uv = (world_xy + vec2<f32>(0.5)) / dim;
-    let samp = textureLoad(u_heightmap, vec2<i32>(world_xy), 0).rg;
-    let height = samp.r * u_heightmap_scale + samp.g;
-
+    let uv = world_xy * WIDTH_RESOLUTION + vec2<f32>(textureDimensions(u_heightmap)) * 0.5;
+    let height = f32(textureLoad(u_heightmap, vec2<i32>(uv), 0).r) / HEIGHT_RESOLUTION;
     // 4) Assemble Z-up world position
     let world_pos3 = vec3<f32>(world_xy, height);
 

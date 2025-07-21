@@ -1,4 +1,8 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use glam::{Mat4, Quat, Vec3, Vec3Swizzles};
 use wgpu::util::DeviceExt;
@@ -86,7 +90,7 @@ impl State {
         };
 
         let depth_texture =
-            texture::Texture::create_depth_texture(Some("depth_texture"), &device, &config);
+            texture::Texture::create_depth_texture("depth_texture", &device, &config);
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -119,7 +123,7 @@ impl State {
         )?];
 
         let camera = Camera {
-            eye: Vec3::new(0.0, 0.01, 1.0),
+            eye: Vec3::new(0.0, 0.01, 90.0),
             target: Vec3::new(0.0, 0.0, 0.0),
             up: Vec3::Z,
             aspect: config.width as f32 / config.height as f32,
@@ -170,7 +174,7 @@ impl State {
             }],
         });
 
-        let camera_controller = CameraController::new(0.005);
+        let camera_controller = CameraController::new(100.0);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -222,8 +226,13 @@ impl State {
         );
 
         #[allow(unused_mut)]
-        let mut terrain =
-            TerrainSystem::new(&device, &queue, &camera_bind_group_layout, config.format)?;
+        let mut terrain = TerrainSystem::new(
+            &device,
+            &queue,
+            &camera_bind_group_layout,
+            config.format,
+            Path::new("assets/test.png"),
+        )?;
 
         terrain.update_terrain_system(&queue, camera.eye.xy());
 
@@ -254,16 +263,14 @@ impl State {
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
 
-            self.depth_texture = texture::Texture::create_depth_texture(
-                Some("Depth texture"),
-                &self.device,
-                &self.config,
-            );
+            self.depth_texture =
+                texture::Texture::create_depth_texture("Depth texture", &self.device, &self.config);
         }
     }
 
-    pub fn update(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera);
+    pub fn update(&mut self, delta_time: Duration) {
+        self.camera_controller
+            .update_camera(&mut self.camera, delta_time);
         self.terrain
             .update_terrain_system(&self.queue, self.camera.eye.xy());
         self.queue.write_buffer(
@@ -348,15 +355,19 @@ impl State {
 
 pub struct App {
     state: Option<State>,
+    last_frame_instant: Instant,
 }
 
 impl App {
     pub fn new() -> Self {
-        Self { state: None }
+        Self {
+            state: None,
+            last_frame_instant: Instant::now(),
+        }
     }
 }
 
-impl ApplicationHandler<State> for App {
+impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes();
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
@@ -378,7 +389,10 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                state.update();
+                let now = Instant::now();
+                let delta_time = now - self.last_frame_instant;
+
+                state.update(delta_time);
                 match state.render() {
                     Ok(_) => {}
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -387,6 +401,8 @@ impl ApplicationHandler<State> for App {
                     }
                     Err(e) => log::error!("Unable to render {}", e),
                 }
+
+                self.last_frame_instant = Instant::now();
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -405,7 +421,7 @@ impl ApplicationHandler<State> for App {
 pub fn run() -> anyhow::Result<()> {
     env_logger::init();
 
-    let event_loop = EventLoop::with_user_event().build()?;
+    let event_loop = EventLoop::new()?;
     let mut app = App::new();
     event_loop.run_app(&mut app)?;
 

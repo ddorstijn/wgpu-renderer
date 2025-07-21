@@ -36,7 +36,7 @@ impl Model3d {
             let material_path_buf = path.parent().unwrap().join(&m.diffuse_texture.unwrap());
             let material_path = material_path_buf.as_path();
             let diffuse_texture = crate::texture::Texture::load(
-                Some(m.name.as_str()),
+                m.name.as_str(),
                 device,
                 queue,
                 material_path,
