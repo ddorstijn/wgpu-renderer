@@ -38,7 +38,7 @@ fn vs_main(
 
     // 3) Sample heightmap at integer XY
     let uv = world_xy / WIDTH_SCALE + vec2<f32>(textureDimensions(u_heightmap)) * 0.5;
-    let height = f32(textureLoad(u_heightmap, vec2<i32>(uv), 0).r) / HEIGHT_SCALE;
+    let height = 0.0;// f32(textureLoad(u_heightmap, vec2<i32>(uv), 0).r) / HEIGHT_SCALE;
     // 4) Assemble Z-up world position
     let world_pos3 = vec3<f32>(world_xy, height);
 
@@ -53,6 +53,7 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+    return in.color;
     // Simple height‐based shading
     let shade = in.world_pos.z * 0.001;
     return vec4<f32>(shade, shade, shade, 1.0);

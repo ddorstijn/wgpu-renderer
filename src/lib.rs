@@ -1,3 +1,6 @@
+#![feature(const_index)]
+#![feature(const_trait_impl)]
+
 use std::{
     path::Path,
     sync::Arc,
