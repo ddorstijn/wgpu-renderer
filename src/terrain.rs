@@ -4,6 +4,7 @@ use glam::{Mat4, Quat, Vec2, Vec3Swizzles, Vec4, quat};
 use std::path::Path;
 use wgpu::util::DeviceExt;
 
+const SCALE_OFFSET: usize = 5;
 const N_LEVELS: usize = 10;
 const N_TILES: usize = N_LEVELS * 16; // 4x4 tiles per level
 const N_FILLERS: usize = N_LEVELS; // 1 filler per level
@@ -185,26 +186,29 @@ impl TerrainSystem {
         let mut cross_data = Vec::new();
         let mut seam_data = Vec::new();
 
-        // --- Cross ---
-        {
-            let snap = camera_position.floor(); // integer world‐)xy
-            let xf = Mat4::from_translation(snap.extend(0.0));
-            cross_data.push(InstanceData {
-                transform: xf,
-                color: Vec4::new(0.0, 0.0, 0.0, 1.0),
-            });
-        }
-
         // The main 4×4 tile ring & filler/trim/seam per level
         for i in 0..N_LEVELS {
-            let scale = (1u32 << i) as f32;
-            let tile_size = Vec2::splat((TILE_RES << i) as f32);
+            let scale = (1u32 << i + SCALE_OFFSET) as f32;
+            let tile_size = Vec2::splat((TILE_RES << i + SCALE_OFFSET) as f32);
 
             let v_scale = Vec2::splat(scale).extend(1.0);
             // snapped camera for this LOD
             let snapped_pos = (camera_position / scale).floor() * scale;
             // bottom‐left corner of 4×4 grid
             let base = snapped_pos - tile_size * 2.0;
+
+            // --- Cross ---
+            if i == 0 {
+                let xf = Mat4::from_scale_rotation_translation(
+                    v_scale,
+                    Quat::IDENTITY,
+                    snapped_pos.extend(0.0),
+                );
+                cross_data.push(InstanceData {
+                    transform: xf,
+                    color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                });
+            }
 
             // --- 4×4 Tiles (skip middle 2×2 if not finest) ---
             for x in 0..4 {
@@ -234,12 +238,10 @@ impl TerrainSystem {
 
             // --- Filler ring ---
             {
-                let snap = (camera_position / scale).floor() * scale;
-
                 let transform = Mat4::from_scale_rotation_translation(
                     v_scale,
                     Quat::IDENTITY,
-                    snap.extend(0.0),
+                    snapped_pos.extend(0.0),
                 );
                 filler_data.push(InstanceData {
                     transform,
@@ -253,7 +255,8 @@ impl TerrainSystem {
                 let next_snap = (camera_position / next_scale).floor() * next_scale;
 
                 // --- Seam ---
-                let next_base = next_snap - Vec2::splat((TILE_RES << (i + 1)) as f32);
+                let next_base =
+                    next_snap - Vec2::splat((TILE_RES << (i + SCALE_OFFSET + 1)) as f32);
                 let transform = Mat4::from_scale_rotation_translation(
                     v_scale,
                     Quat::IDENTITY,
@@ -377,7 +380,7 @@ impl VertexAttribute for Mesh2d<V_TILE, I_TILE> {
     }
 }
 
-const TILE_RES: usize = 2;
+const TILE_RES: usize = 64;
 const PATCH_RES: usize = TILE_RES + 1;
 const CLIP_RES: usize = TILE_RES * 4 + 1;
 const CLIP_VERT_RES: usize = CLIP_RES + 1;
