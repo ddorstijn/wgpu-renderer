@@ -26,24 +26,62 @@ struct InstanceData {
     color: Vec4,
 }
 
-impl VertexAttribute for InstanceData {
-    const ATTRIBS: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
-       // start at location 1 because Vec2 position is at 0
-       1 => Float32x4,
-       2 => Float32x4,
-       3 => Float32x4,
-       4 => Float32x4,
+struct TerrainComponent {
+    instances: wgpu::Buffer,
+    instance_count: usize,
+    instance_bg: wgpu::BindGroup,
+    vertex_bf: wgpu::Buffer,
+    index_bf: wgpu::Buffer,
+    index_count: usize,
+}
 
-       5 => Float32x4,
-    ];
+impl TerrainComponent {
+    pub fn new(device: &wgpu::Device, instance_bgl: &wgpu::BindGroupLayout, mesh: Mesh2d) -> Self {
+        let instances = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer"),
+            size: std::mem::size_of::<InstanceData>() as u64 * mesh.instance_count as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-    /// VertexBufferLayout for a 4×4 matrix at locations 1..4, instance‐step.
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceData>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: Self::ATTRIBS,
+        let instance_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("TerrainComponent BG"),
+            layout: &instance_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: instances.as_entire_binding(),
+            }],
+        });
+
+        Self {
+            instances,
+            instance_count: mesh.instance_count,
+            instance_bg,
+            vertex_bf: mesh.vertex_buffer(device),
+            index_bf: mesh.index_buffer(device),
+            index_count: mesh.index_count,
         }
+    }
+}
+
+trait DrawTerrainComponent<'a> {
+    #[allow(unused)]
+    fn draw_terrain(&mut self, component: &'a TerrainComponent);
+}
+
+impl<'a, 'b> DrawTerrainComponent<'b> for wgpu::RenderPass<'a>
+where
+    'b: 'a,
+{
+    fn draw_terrain(&mut self, component: &'a TerrainComponent) {
+        self.set_bind_group(2, &component.instance_bg, &[]);
+        self.set_vertex_buffer(0, component.vertex_bf.slice(..));
+        self.set_index_buffer(component.index_bf.slice(..), wgpu::IndexFormat::Uint32);
+        self.draw_indexed(
+            0..component.index_count as u32,
+            0,
+            0..component.instance_count as u32,
+        );
     }
 }
 
@@ -52,29 +90,13 @@ pub struct TerrainSystem {
     #[allow(unused)]
     heightmap: texture::Texture, // Later used for editing
     render_pipeline: wgpu::RenderPipeline,
-    shared_bind_group: wgpu::BindGroup,
+    heightmap_bg: wgpu::BindGroup,
 
-    // per‐mesh instance buffers & counts
-    tile_instances: wgpu::Buffer,
-    filler_instances: wgpu::Buffer,
-    trim_instances: wgpu::Buffer,
-    cross_instances: wgpu::Buffer,
-    seam_instances: wgpu::Buffer,
-
-    tile_vertex: wgpu::Buffer,
-    tile_index: wgpu::Buffer,
-
-    seam_vertex: wgpu::Buffer,
-    seam_index: wgpu::Buffer,
-
-    trim_vertex: wgpu::Buffer,
-    trim_index: wgpu::Buffer,
-
-    cross_vertex: wgpu::Buffer,
-    cross_index: wgpu::Buffer,
-
-    filler_vertex: wgpu::Buffer,
-    filler_index: wgpu::Buffer,
+    tile: TerrainComponent,
+    cross: TerrainComponent,
+    fill: TerrainComponent,
+    trim: TerrainComponent,
+    seam: TerrainComponent,
 }
 
 impl TerrainSystem {
@@ -89,33 +111,46 @@ impl TerrainSystem {
             texture::Texture::from_heightmap("Heightmap", device, queue, heightmap_path)?;
 
         // --- Bind Group Layouts ---
-        let heightmap_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Terrain Shared BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Uint,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let heightmap_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Terrain Heightmap BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let instance_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("TerrainComponent BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
         // --- Bind Groups ---
-        let shared_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Terrain Shared BG"),
-            layout: &heightmap_bind_group_layout,
+        let heightmap_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Terrain Heightmap BG"),
+            layout: &heightmap_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -132,7 +167,7 @@ impl TerrainSystem {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Terrain Pipeline Layout"),
-                bind_group_layouts: &[camera_bind_group_layout, &heightmap_bind_group_layout],
+                bind_group_layouts: &[camera_bind_group_layout, &heightmap_bgl, &instance_bgl],
                 push_constant_ranges: &[],
             });
 
@@ -140,41 +175,26 @@ impl TerrainSystem {
             device,
             &render_pipeline_layout,
             render_format,
-            &[Mesh2d::desc(), InstanceData::desc()],
+            &[Mesh2d::desc()],
             wgpu::include_wgsl!("terrain.wgsl"),
         );
 
-        // --- Pre‐allocate instance buffers for maximum possible instances ---
-        let alloc = |count| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Instance Buffer"),
-                size: std::mem::size_of::<InstanceData>() as u64 * count as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
+        let tile = TerrainComponent::new(device, &instance_bgl, TILE_MESH);
+        let cross = TerrainComponent::new(device, &instance_bgl, CROSS_MESH);
+        let fill = TerrainComponent::new(device, &instance_bgl, FILLER_MESH);
+        let trim = TerrainComponent::new(device, &instance_bgl, TRIM_MESH);
+        let seam = TerrainComponent::new(device, &instance_bgl, SEAM_MESH);
 
         Ok(Self {
             heightmap,
             render_pipeline,
-            shared_bind_group,
+            heightmap_bg,
 
-            tile_instances: alloc(N_TILES), // 4x4 tiles per level
-            filler_instances: alloc(N_FILLERS),
-            trim_instances: alloc(N_TRIMS), // no trim for finest level
-            seam_instances: alloc(N_SEAMS), // no seam for finest level
-            cross_instances: alloc(N_CROSS), // 1 cross at camera position
-
-            tile_vertex: TILE_MESH.vertex_buffer(device),
-            tile_index: TILE_MESH.index_buffer(device),
-            seam_vertex: SEAM_MESH.vertex_buffer(device),
-            seam_index: SEAM_MESH.index_buffer(device),
-            trim_vertex: TRIM_MESH.vertex_buffer(device),
-            trim_index: TRIM_MESH.index_buffer(device),
-            cross_vertex: CROSS_MESH.vertex_buffer(device),
-            cross_index: CROSS_MESH.index_buffer(device),
-            filler_vertex: FILLER_MESH.vertex_buffer(device),
-            filler_index: FILLER_MESH.index_buffer(device),
+            tile,
+            cross,
+            fill,
+            trim,
+            seam,
         })
     }
 
@@ -287,15 +307,11 @@ impl TerrainSystem {
         }
 
         // 3) Upload each to its GPU buffer
-        queue.write_buffer(&self.tile_instances, 0, bytemuck::cast_slice(&tile_data));
-        queue.write_buffer(&self.cross_instances, 0, bytemuck::cast_slice(&cross_data));
-        queue.write_buffer(&self.seam_instances, 0, bytemuck::cast_slice(&seam_data));
-        queue.write_buffer(&self.trim_instances, 0, bytemuck::cast_slice(&trim_data));
-        queue.write_buffer(
-            &self.filler_instances,
-            0,
-            bytemuck::cast_slice(&filler_data),
-        );
+        queue.write_buffer(&self.tile.instances, 0, bytemuck::cast_slice(&tile_data));
+        queue.write_buffer(&self.cross.instances, 0, bytemuck::cast_slice(&cross_data));
+        queue.write_buffer(&self.seam.instances, 0, bytemuck::cast_slice(&seam_data));
+        queue.write_buffer(&self.trim.instances, 0, bytemuck::cast_slice(&trim_data));
+        queue.write_buffer(&self.fill.instances, 0, bytemuck::cast_slice(&filler_data));
     }
 
     pub fn render<'a>(
@@ -307,78 +323,17 @@ impl TerrainSystem {
 
         // shared bind groups
         rpass.set_bind_group(0, camera_bind_group, &[]);
-        rpass.set_bind_group(1, &self.shared_bind_group, &[]);
+        rpass.set_bind_group(1, &self.heightmap_bg, &[]);
 
-        // DRAW TILE INSTANCES
-        rpass.set_vertex_buffer(0, self.tile_vertex.slice(..));
-        rpass.set_vertex_buffer(1, self.tile_instances.slice(..));
-        rpass.set_index_buffer(self.tile_index.slice(..), wgpu::IndexFormat::Uint32);
-        rpass.draw_indexed(0..I_TILE as _, 0, 0..N_TILES as u32);
-
-        // DRAW CROSS INSTANCES
-        rpass.set_vertex_buffer(0, self.cross_vertex.slice(..));
-        rpass.set_vertex_buffer(1, self.cross_instances.slice(..));
-        rpass.set_index_buffer(self.cross_index.slice(..), wgpu::IndexFormat::Uint32);
-        rpass.draw_indexed(0..I_CROSS as _, 0, 0..N_CROSS as u32);
-
-        // DRAW SEAM INSTANCES
-        rpass.set_vertex_buffer(0, self.seam_vertex.slice(..));
-        rpass.set_vertex_buffer(1, self.seam_instances.slice(..));
-        rpass.set_index_buffer(self.seam_index.slice(..), wgpu::IndexFormat::Uint32);
-        rpass.draw_indexed(0..I_SEAM as _, 0, 0..N_SEAMS as u32);
-
-        // DRAW TRIM INSTANCES
-        rpass.set_vertex_buffer(0, self.trim_vertex.slice(..));
-        rpass.set_vertex_buffer(1, self.trim_instances.slice(..));
-        rpass.set_index_buffer(self.trim_index.slice(..), wgpu::IndexFormat::Uint32);
-        rpass.draw_indexed(0..I_TRIM as _, 0, 0..N_TRIMS as u32);
-
-        // DRAW FILLER INSTANCES
-        rpass.set_vertex_buffer(0, self.filler_vertex.slice(..));
-        rpass.set_vertex_buffer(1, self.filler_instances.slice(..));
-        rpass.set_index_buffer(self.filler_index.slice(..), wgpu::IndexFormat::Uint32);
-        rpass.draw_indexed(0..I_FILL as _, 0, 0..N_FILLERS as u32);
+        rpass.draw_terrain(&self.tile);
+        rpass.draw_terrain(&self.cross);
+        rpass.draw_terrain(&self.fill);
+        rpass.draw_terrain(&self.trim);
+        rpass.draw_terrain(&self.seam);
     }
 }
 
-#[derive(Debug)]
-pub struct Mesh2d<const V: usize, const I: usize> {
-    pub label: &'static str,
-    pub vertices: [Vec2; V],
-    pub indices: [u32; I],
-}
-
-impl<const V: usize, const I: usize> Mesh2d<V, I> {
-    pub fn vertex_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some((self.label.to_owned() + "Vertex Buffer").as_str()),
-            contents: bytemuck::cast_slice(&self.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        })
-    }
-
-    pub fn index_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some((self.label.to_owned() + "Index Buffer").as_str()),
-            contents: bytemuck::cast_slice(&self.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        })
-    }
-}
-
-impl VertexAttribute for Mesh2d<V_TILE, I_TILE> {
-    const ATTRIBS: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
-        0 => Float32x2,
-    ];
-
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vec2>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: Self::ATTRIBS,
-        }
-    }
-}
+// Const generated meshes
 
 const TILE_RES: usize = 64;
 const PATCH_RES: usize = TILE_RES + 1;
@@ -400,15 +355,61 @@ const I_CROSS: usize = 24 * TILE_RES + 6;
 const V_SEAM: usize = 4 * CLIP_VERT_RES;
 const I_SEAM: usize = 6 * CLIP_VERT_RES;
 
-const fn generate_tile_mesh() -> Mesh2d<V_TILE, I_TILE> {
-    let mut vertices = [Vec2::ZERO; V_TILE];
+// TILE always has the most vertices and indices. Means we are wasting some space for the others, but makes implementation much easier on our side.
+const V_MAX: usize = V_TILE;
+const I_MAX: usize = I_TILE;
+
+#[derive(Debug)]
+pub struct Mesh2d {
+    pub label: &'static str,
+    pub vertices: [Vec2; V_MAX],
+    pub indices: [u32; I_MAX],
+    pub vertex_count: usize,
+    pub index_count: usize,
+    pub instance_count: usize,
+}
+
+impl Mesh2d {
+    pub fn vertex_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some((self.label.to_owned() + "Vertex Buffer").as_str()),
+            contents: bytemuck::cast_slice(&self.vertices[0..self.vertex_count]),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    }
+
+    pub fn index_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some((self.label.to_owned() + "Index Buffer").as_str()),
+            contents: bytemuck::cast_slice(&self.indices[0..self.index_count]),
+            usage: wgpu::BufferUsages::INDEX,
+        })
+    }
+}
+
+impl VertexAttribute for Mesh2d {
+    const ATTRIBS: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
+        0 => Float32x2,
+    ];
+
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vec2>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: Self::ATTRIBS,
+        }
+    }
+}
+
+const fn generate_tile_mesh() -> Mesh2d {
+    let mut vertices = [Vec2::ZERO; V_MAX];
     const_for!(v in 0..V_TILE => {
         let x = (v % PATCH_RES) as f32;
         let y = (v / PATCH_RES) as f32;
         vertices[v] = Vec2::new(x, y);
     });
 
-    let mut indices = [0u32; I_TILE];
+    let mut indices = [0u32; I_MAX];
     let mut idx = 0;
     const_for!(y in 0..TILE_RES => {
         const_for!(x in 0..TILE_RES => {
@@ -428,11 +429,14 @@ const fn generate_tile_mesh() -> Mesh2d<V_TILE, I_TILE> {
         label: "Tile",
         vertices,
         indices,
+        vertex_count: V_TILE,
+        index_count: I_TILE,
+        instance_count: N_TILES,
     }
 }
 
-const fn generate_filler_mesh() -> Mesh2d<V_FILL, I_FILL> {
-    let mut verts = [Vec2::ZERO; V_FILL];
+const fn generate_filler_mesh() -> Mesh2d {
+    let mut vertices = [Vec2::ZERO; V_MAX];
     let mut v = 0;
     let offset = TILE_RES as f32;
 
@@ -440,7 +444,7 @@ const fn generate_filler_mesh() -> Mesh2d<V_FILL, I_FILL> {
     const_for!(arm in 0..4 => {
         const_for!(i in 0..PATCH_RES => {
             let i_f = i as f32;
-            verts[v..v + 2].copy_from_slice(&match arm {
+            vertices[v..v + 2].copy_from_slice(&match arm {
                 0 => {
                     // +X arm
                     let x = offset + i_f + 1.0;
@@ -466,7 +470,7 @@ const fn generate_filler_mesh() -> Mesh2d<V_FILL, I_FILL> {
         });
     });
 
-    let mut idxs = [0u32; I_FILL];
+    let mut indices = [0u32; I_MAX];
     let mut idx = 0;
     const_for!(a in 0..(TILE_RES * 4) => {
         let arm = a / TILE_RES;
@@ -486,14 +490,17 @@ const fn generate_filler_mesh() -> Mesh2d<V_FILL, I_FILL> {
             // Vertical arms: [br,bl,tl], [br,tl,tr] - FIXED
             [br, bl, tl, br, tl, tr]
         };
-        idxs[idx..idx + 6].copy_from_slice(&quad_indices);
+        indices[idx..idx + 6].copy_from_slice(&quad_indices);
         idx += 6;
     });
 
     Mesh2d {
         label: "Filler",
-        vertices: verts,
-        indices: idxs,
+        vertices,
+        indices,
+        vertex_count: V_FILL,
+        index_count: I_FILL,
+        instance_count: N_FILLERS,
     }
 }
 
@@ -501,9 +508,9 @@ const fn generate_filler_mesh() -> Mesh2d<V_FILL, I_FILL> {
 // 4) generate_trim_mesh
 // -------------------------------------------------------------------
 
-const fn generate_trim_mesh() -> Mesh2d<V_TRIM, I_TRIM> {
-    let mut vertices = [Vec2::ZERO; V_TRIM];
-    let mut indices = [0u32; I_TRIM];
+const fn generate_trim_mesh() -> Mesh2d {
+    let mut vertices = [Vec2::ZERO; V_MAX];
+    let mut indices = [0u32; I_MAX];
 
     // precompute half the total extent (to center at origin)
     let extent_f = CLIP_VERT_RES as f32 + 1.0;
@@ -561,20 +568,23 @@ const fn generate_trim_mesh() -> Mesh2d<V_TRIM, I_TRIM> {
         label: "Trim",
         vertices,
         indices,
+        vertex_count: V_TRIM,
+        index_count: I_TRIM,
+        instance_count: N_TRIMS,
     }
 }
 
-const fn generate_cross_mesh() -> Mesh2d<V_CROSS, I_CROSS> {
-    let mut verts = [Vec2::ZERO; V_CROSS];
-    let mut idxs = [0u32; I_CROSS];
+const fn generate_cross_mesh() -> Mesh2d {
+    let mut vertices = [Vec2::ZERO; V_MAX];
+    let mut indices = [0u32; I_MAX];
 
     // 1) horizontal bar vertices
     let tile_f = TILE_RES as f32;
     let mut v = 0;
     const_for!(i in 0..(PATCH_RES * 2) => {
         let x = i as f32 - tile_f;
-        verts[v] = Vec2::new(x, 0.0);
-        verts[v + 1] = Vec2::new(x, 1.0);
+        vertices[v] = Vec2::new(x, 0.0);
+        vertices[v + 1] = Vec2::new(x, 1.0);
         v += 2;
     });
 
@@ -584,8 +594,8 @@ const fn generate_cross_mesh() -> Mesh2d<V_CROSS, I_CROSS> {
     // 2) vertical bar vertices
     const_for!(i in 0..(PATCH_RES * 2) => {
         let y = i as f32 - tile_f;
-        verts[v] = Vec2::new(0.0, y);
-        verts[v + 1] = Vec2::new(1.0, y);
+        vertices[v] = Vec2::new(0.0, y);
+        vertices[v + 1] = Vec2::new(1.0, y);
         v += 2;
     });
 
@@ -596,12 +606,12 @@ const fn generate_cross_mesh() -> Mesh2d<V_CROSS, I_CROSS> {
         let br = bl + 1;
         let tl = bl + 2;
         let tr = br + 2;
-        idxs[idx + 0] = br;
-        idxs[idx + 1] = bl;
-        idxs[idx + 2] = tr;
-        idxs[idx + 3] = bl;
-        idxs[idx + 4] = tl;
-        idxs[idx + 5] = tr;
+        indices[idx + 0] = br;
+        indices[idx + 1] = bl;
+        indices[idx + 2] = tr;
+        indices[idx + 3] = bl;
+        indices[idx + 4] = tl;
+        indices[idx + 5] = tr;
         idx += 6;
     });
 
@@ -612,26 +622,29 @@ const fn generate_cross_mesh() -> Mesh2d<V_CROSS, I_CROSS> {
             let br = bl + 1;
             let tl = bl + 2;
             let tr = br + 2;
-            idxs[idx + 0] = vert_base + br;
-            idxs[idx + 1] = vert_base + tr;
-            idxs[idx + 2] = vert_base + bl;
-            idxs[idx + 3] = vert_base + bl;
-            idxs[idx + 4] = vert_base + tr;
-            idxs[idx + 5] = vert_base + tl;
+            indices[idx + 0] = vert_base + br;
+            indices[idx + 1] = vert_base + tr;
+            indices[idx + 2] = vert_base + bl;
+            indices[idx + 3] = vert_base + bl;
+            indices[idx + 4] = vert_base + tr;
+            indices[idx + 5] = vert_base + tl;
             idx += 6;
         }
     });
 
     Mesh2d {
         label: "Cross",
-        vertices: verts,
-        indices: idxs,
+        vertices,
+        indices,
+        vertex_count: V_CROSS,
+        index_count: I_CROSS,
+        instance_count: N_CROSS,
     }
 }
 
-const fn generate_seam_mesh() -> Mesh2d<V_SEAM, I_SEAM> {
-    let mut vertices = [Vec2::ZERO; V_SEAM];
-    let mut indices = [0u32; I_SEAM];
+const fn generate_seam_mesh() -> Mesh2d {
+    let mut vertices = [Vec2::ZERO; V_MAX];
+    let mut indices = [0u32; I_MAX];
 
     // 1) ring of CLIP_VERT_RES verts on each side
     let res_f = CLIP_VERT_RES as f32;
@@ -658,11 +671,14 @@ const fn generate_seam_mesh() -> Mesh2d<V_SEAM, I_SEAM> {
         label: "Seam",
         vertices,
         indices,
+        vertex_count: V_SEAM,
+        index_count: I_SEAM,
+        instance_count: N_SEAMS,
     }
 }
 
-const TILE_MESH: Mesh2d<V_TILE, I_TILE> = generate_tile_mesh();
-const FILLER_MESH: Mesh2d<V_FILL, I_FILL> = generate_filler_mesh();
-const TRIM_MESH: Mesh2d<V_TRIM, I_TRIM> = generate_trim_mesh();
-const CROSS_MESH: Mesh2d<V_CROSS, I_CROSS> = generate_cross_mesh();
-const SEAM_MESH: Mesh2d<V_SEAM, I_SEAM> = generate_seam_mesh();
+const TILE_MESH: Mesh2d = generate_tile_mesh();
+const FILLER_MESH: Mesh2d = generate_filler_mesh();
+const TRIM_MESH: Mesh2d = generate_trim_mesh();
+const CROSS_MESH: Mesh2d = generate_cross_mesh();
+const SEAM_MESH: Mesh2d = generate_seam_mesh();

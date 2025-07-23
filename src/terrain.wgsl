@@ -8,6 +8,13 @@ const WIDTH_SCALE: f32 = 2.0;
 @group(1) @binding(0) var u_heightmap           : texture_2d<u32>;
 @group(1) @binding(1) var u_sampler             : sampler;
 
+struct Instance {
+    transform: mat4x4<f32>,
+    color: vec4<f32>,
+}
+@group(2) @binding(0)
+var<storage, read> instances: array<Instance>;
+
 struct VSOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0)       world_pos: vec3<f32>,
@@ -18,16 +25,13 @@ struct VSOut {
 @vertex
 fn vs_main(
     @location(0) a_pos: vec2<f32>,
-    @location(1) m0: vec4<f32>,
-    @location(2) m1: vec4<f32>,
-    @location(3) m2: vec4<f32>,
-    @location(4) m3: vec4<f32>,
-    @location(5) c: vec4<f32>
+    @builtin(instance_index) instance_idx: u32
 ) -> VSOut {
     var out: VSOut;
 
+    let instance_data = instances[instance_idx];
     // Reconstruct 4×4 model matrix
-    let model = mat4x4<f32>(m0, m1, m2, m3);
+    let model = instance_data.transform;
 
     // 1) Lift 2D (X,Y,0,1)
     let local = vec4<f32>(a_pos.x, a_pos.y, 0.0, 1.0);
@@ -46,7 +50,7 @@ fn vs_main(
     out.clip_pos = u_view_proj * vec4<f32>(world_pos3, 1.0);
     out.world_pos = world_pos3;
     out.uv = uv;
-    out.color = c;
+    out.color = instance_data.color;
 
     return out;
 }
