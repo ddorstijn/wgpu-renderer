@@ -3,22 +3,23 @@ name = "road"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-crate-type = ["rlib"]
+[workspace]
+resolver = "3"
+members = ["crates/*"]
 
 [dependencies]
 anyhow = "1.0.98"
-bytemuck = "1.23.1"
-const_for = "0.1.5"
 env_logger = "0.11.8"
-glam = { version = "0.30.4", features = ["bytemuck", "fast-math"] }
 image = { version = "0.25.6", default-features = false, features = [
     "jpeg",
     "png",
 ] }
-log = "0.4.27"
 ordered-float = "5.0.0"
 pollster = "0.4.0"
 tobj = "4.0.3"
+
+[workspace.dependencies]
+bytemuck = "1.23.1"
+glam = { version = "0.30.4", features = ["bytemuck", "fast-math"] }
+log = "0.4.27"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", version = "26.0.0" }
-winit = "0.30.11"

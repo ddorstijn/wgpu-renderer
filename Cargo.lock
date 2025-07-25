@@ -1525,17 +1525,11 @@ name = "road"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
- "const_for",
  "env_logger",
- "glam",
  "image",
- "log",
  "ordered-float",
  "pollster",
  "tobj",
- "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -2662,6 +2656,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"
 dependencies = [
  "bitflags 2.9.1",
+]
+
+[[package]]
+name = "wre-collision"
+version = "0.1.0"
+
+[[package]]
+name = "wre-model"
+version = "0.1.0"
+
+[[package]]
+name = "wre-terrain"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "const_for",
+ "glam",
+ "wgpu",
+]
+
+[[package]]
+name = "wre-window"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "pollster",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]

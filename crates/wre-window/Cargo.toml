@@ -1,0 +1,13 @@
+[package]
+name = "wre-window"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+pollster = "0.4.0"
+log = { workspace = true }
+winit = "0.30.11"
+wgpu = { workspace = true }

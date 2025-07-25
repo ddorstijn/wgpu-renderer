@@ -29,7 +29,6 @@ mod model;
 mod terrain;
 mod texture;
 mod util;
-
 pub struct State {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
