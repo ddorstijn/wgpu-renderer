@@ -1,5 +1,5 @@
 [package]
-name = "wre-terrain"
+name = "wre_terrain"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,3 +8,6 @@ bytemuck = { workspace = true }
 const_for = "0.1.5"
 glam = { workspace = true }
 wgpu = { workspace = true }
+wre_model = { path = "../wre_model" }
+wre_camera = { path = "../wre_camera" }
+thiserror = { workspace = true }

@@ -1,4 +1,4 @@
-use crate::consts::Mesh2d;
+use crate::{InstanceData, consts::Mesh2d};
 
 pub struct TerrainComponent {
     pub(crate) instance_count: usize,
@@ -38,7 +38,7 @@ impl TerrainComponent {
     }
 }
 
-trait DrawTerrainComponent<'a> {
+pub trait DrawTerrainComponent<'a> {
     #[allow(unused)]
     fn draw_terrain(&mut self, component: &'a TerrainComponent);
 }

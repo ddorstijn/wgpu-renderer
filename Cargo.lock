@@ -1526,10 +1526,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "env_logger",
- "image",
- "ordered-float",
  "pollster",
- "tobj",
 ]
 
 [[package]]
@@ -2659,31 +2656,82 @@ dependencies = [
 ]
 
 [[package]]
-name = "wre-collision"
+name = "wre_camera"
+version = "0.1.0"
+dependencies = [
+ "glam",
+]
+
+[[package]]
+name = "wre_collision"
 version = "0.1.0"
 
 [[package]]
-name = "wre-model"
+name = "wre_input"
 version = "0.1.0"
+dependencies = [
+ "wre_window",
+]
 
 [[package]]
-name = "wre-terrain"
+name = "wre_model"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "image",
+ "thiserror 2.0.12",
+ "tobj",
+ "wgpu",
+]
+
+[[package]]
+name = "wre_player"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "wre_camera",
+ "wre_input",
+]
+
+[[package]]
+name = "wre_renderer"
+version = "0.1.0"
+dependencies = [
+ "wgpu",
+]
+
+[[package]]
+name = "wre_terrain"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "const_for",
  "glam",
+ "thiserror 2.0.12",
  "wgpu",
+ "wre_camera",
+ "wre_model",
 ]
 
 [[package]]
-name = "wre-window"
+name = "wre_window"
 version = "0.1.0"
 dependencies = [
  "log",
  "pollster",
  "wgpu",
  "winit",
+ "wre_world",
+]
+
+[[package]]
+name = "wre_world"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "wre_camera",
+ "wre_terrain",
 ]
 
 [[package]]

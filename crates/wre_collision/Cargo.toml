@@ -1,0 +1,6 @@
+[package]
+name = "wre_collision"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]

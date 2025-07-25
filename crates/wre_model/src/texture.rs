@@ -1,7 +1,12 @@
-use std::path::Path;
-
-use anyhow::Result;
 use image::{EncodableLayout, GenericImageView, ImageReader};
+
+#[derive(Debug, thiserror::Error)]
+pub enum TextureError {
+    #[error("Texture [IO] error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("Texture [IMG] error: {0}")]
+    DecodeError(#[from] image::ImageError),
+}
 
 #[derive(Debug)]
 pub struct Texture {
@@ -16,8 +21,8 @@ impl Texture {
         label: &str,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        path: &Path,
-    ) -> Result<Self> {
+        path: &std::path::Path,
+    ) -> Result<Self, TextureError> {
         let img = ImageReader::open(path)?.decode()?;
         let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
@@ -120,8 +125,8 @@ impl Texture {
         label: &str,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        path: &Path,
-    ) -> Result<Self> {
+        path: &std::path::Path,
+    ) -> Result<Self, TextureError> {
         let img = ImageReader::open(path)?.decode()?;
         let dimensions = img.dimensions();
         let size = wgpu::Extent3d {

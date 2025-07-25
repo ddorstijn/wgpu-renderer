@@ -1,11 +1,38 @@
+#![feature(const_index)]
+#![feature(const_trait_impl)]
+
 use std::path::Path;
 
-use crate::component::TerrainComponent;
+use crate::{
+    component::{DrawTerrainComponent, TerrainComponent},
+    consts::{
+        CROSS_MESH, FILLER_MESH, Mesh2d, N_LEVELS, ROTATIONS, SCALE_OFFSET, SEAM_MESH, TILE_MESH,
+        TILE_RES, TRIM_MESH,
+    },
+};
+use glam::{Mat4, Quat, Vec2, Vec3Swizzles};
+use wre_camera::Camera;
+use wre_model::{VertexAttribute, texture::Texture};
+
+mod component;
+mod consts;
+
+#[derive(Debug, thiserror::Error)]
+pub enum TerrainError {
+    #[error("Terrain [IO] texture error: {0}")]
+    TextureLoadError(#[from] wre_model::texture::TextureError),
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct InstanceData {
+    transform: Mat4,
+}
 
 // In your main render state or engine structure
-pub struct TerrainSystem {
+pub struct Terrain {
     #[allow(unused)]
-    heightmap_bf: texture::Texture, // Later used for editing
+    heightmap_bf: Texture, // Later used for editing
     heightmap_bg: wgpu::BindGroup,
 
     render_pipeline: wgpu::RenderPipeline,
@@ -17,16 +44,20 @@ pub struct TerrainSystem {
     seam: TerrainComponent,
 }
 
-impl TerrainSystem {
+impl Terrain {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         camera_bgl: &wgpu::BindGroupLayout,
         render_format: wgpu::TextureFormat,
         heightmap_path: &Path,
-    ) -> anyhow::Result<Self> {
-        let heightmap_bf =
-            texture::Texture::from_heightmap("Heightmap", device, queue, heightmap_path)?;
+    ) -> Result<Self, TerrainError> {
+        let heightmap_bf = wre_model::texture::Texture::from_heightmap(
+            "Heightmap",
+            device,
+            queue,
+            heightmap_path,
+        )?;
 
         // --- Bind Group Layouts ---
         let heightmap_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -89,13 +120,60 @@ impl TerrainSystem {
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = create_render_pipeline(
-            device,
-            &render_pipeline_layout,
-            render_format,
-            &[Mesh2d::desc()],
-            wgpu::include_wgsl!("terrain.wgsl"),
-        );
+        let shader = device.create_shader_module(wgpu::include_wgsl!("terrain.wgsl"));
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Mesh2d::desc()],
+                compilation_options: Default::default(),
+            },
+
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: render_format,
+                    blend: Some(wgpu::BlendState {
+                        alpha: wgpu::BlendComponent::REPLACE,
+                        color: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+
+            multiview: None,
+            cache: None,
+        });
 
         let tile = TerrainComponent::new(device, &instance_bgl, TILE_MESH);
         let cross = TerrainComponent::new(device, &instance_bgl, CROSS_MESH);

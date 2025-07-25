@@ -1,7 +1,8 @@
-use crate::texture;
 use glam::{Mat4, Vec2, Vec3};
 use std::{ops::Range, path::Path};
 use wgpu::util::DeviceExt;
+
+pub mod texture;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -9,19 +10,27 @@ pub struct Instance {
     pub transform: Mat4,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ModelError {
+    #[error("Model [IO] load error: {0}")]
+    ModelLoadError(#[from] tobj::LoadError),
+    #[error("Model [IO] texture error: {0}")]
+    TextureLoadError(#[from] crate::texture::TextureError),
+}
+
 #[derive(Debug)]
-pub struct Model3d {
+pub struct Model {
     pub meshes: Vec<Mesh>,
     pub materials: Vec<Material>,
 }
 
-impl Model3d {
+impl Model {
     pub fn load(
         path: &Path,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, ModelError> {
         let (models, obj_materials) = tobj::load_obj(
             path,
             &tobj::LoadOptions {
@@ -184,8 +193,8 @@ pub trait DrawModel<'a> {
     );
 
     #[allow(unused)]
-    fn draw_model(&mut self, model: &'a Model3d);
-    fn draw_model_instanced(&mut self, model: &'a Model3d, instances: Range<u32>);
+    fn draw_model(&mut self, model: &'a Model);
+    fn draw_model_instanced(&mut self, model: &'a Model, instances: Range<u32>);
 }
 
 impl<'a, 'b> DrawModel<'b> for wgpu::RenderPass<'a>
@@ -208,11 +217,11 @@ where
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 
-    fn draw_model(&mut self, model: &'b Model3d) {
+    fn draw_model(&mut self, model: &'b Model) {
         self.draw_model_instanced(model, 0..1);
     }
 
-    fn draw_model_instanced(&mut self, model: &'b Model3d, instances: Range<u32>) {
+    fn draw_model_instanced(&mut self, model: &'b Model, instances: Range<u32>) {
         for mesh in &model.meshes {
             let material = &model.materials[mesh.material];
             self.draw_mesh_instanced(mesh, material, instances.clone());

@@ -1,5 +1,5 @@
 [package]
-name = "wre-window"
+name = "wre_window"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,3 +11,4 @@ pollster = "0.4.0"
 log = { workspace = true }
 winit = "0.30.11"
 wgpu = { workspace = true }
+wre_world = { path = "../wre_world" }

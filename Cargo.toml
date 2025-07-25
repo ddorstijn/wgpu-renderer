@@ -10,16 +10,11 @@ members = ["crates/*"]
 [dependencies]
 anyhow = "1.0.98"
 env_logger = "0.11.8"
-image = { version = "0.25.6", default-features = false, features = [
-    "jpeg",
-    "png",
-] }
-ordered-float = "5.0.0"
 pollster = "0.4.0"
-tobj = "4.0.3"
 
 [workspace.dependencies]
 bytemuck = "1.23.1"
 glam = { version = "0.30.4", features = ["bytemuck", "fast-math"] }
 log = "0.4.27"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", version = "26.0.0" }
+thiserror = "2.0.12"

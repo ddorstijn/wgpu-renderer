@@ -1,5 +1,14 @@
 use const_for::const_for;
-use glam::Vec2;
+use glam::{Quat, Vec2, quat};
+use wgpu::util::DeviceExt;
+use wre_model::VertexAttribute;
+
+pub(crate) const ROTATIONS: [Quat; 4] = [
+    Quat::IDENTITY,
+    quat(0.0, 0.0, 0.70710677, -0.70710677), // 270 degrees
+    quat(0.0, 0.0, 0.70710677, 0.70710677),  // 90 degrees
+    quat(0.0, 0.0, 1.0, 0.0),                // 180 degrees
+];
 
 pub(crate) const SCALE_OFFSET: usize = 5;
 pub(crate) const N_LEVELS: usize = 10;
@@ -10,7 +19,7 @@ pub(crate) const N_SEAMS: usize = N_LEVELS - 1; // no seam for finest
 pub(crate) const N_CROSS: usize = 1; // 1 cross at camera position
 
 // Const generated meshes
-const TILE_RES: usize = 64;
+pub const TILE_RES: usize = 64;
 const PATCH_RES: usize = TILE_RES + 1;
 const CLIP_RES: usize = TILE_RES * 4 + 1;
 const CLIP_VERT_RES: usize = CLIP_RES + 1;
@@ -348,8 +357,8 @@ const fn generate_seam_mesh() -> Mesh2d {
     }
 }
 
-const TILE_MESH: Mesh2d = generate_tile_mesh();
-const FILLER_MESH: Mesh2d = generate_filler_mesh();
-const TRIM_MESH: Mesh2d = generate_trim_mesh();
-const CROSS_MESH: Mesh2d = generate_cross_mesh();
-const SEAM_MESH: Mesh2d = generate_seam_mesh();
+pub const TILE_MESH: Mesh2d = generate_tile_mesh();
+pub const FILLER_MESH: Mesh2d = generate_filler_mesh();
+pub const TRIM_MESH: Mesh2d = generate_trim_mesh();
+pub const CROSS_MESH: Mesh2d = generate_cross_mesh();
+pub const SEAM_MESH: Mesh2d = generate_seam_mesh();

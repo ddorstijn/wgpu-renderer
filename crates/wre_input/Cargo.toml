@@ -1,6 +1,7 @@
 [package]
-name = "wre-collision"
+name = "wre_input"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+wre_window = { path = "../wre_window" }
