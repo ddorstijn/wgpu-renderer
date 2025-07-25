@@ -10,7 +10,6 @@ const WIDTH_SCALE: f32 = 2.0;
 
 struct Instance {
     transform: mat4x4<f32>,
-    color: vec4<f32>,
 }
 @group(2) @binding(0)
 var<storage, read> instances: array<Instance>;
@@ -18,8 +17,6 @@ var<storage, read> instances: array<Instance>;
 struct VSOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0)       world_pos: vec3<f32>,
-    @location(1)       uv: vec2<f32>,
-    @location(2)       color: vec4<f32>,
 };
 
 @vertex
@@ -49,8 +46,6 @@ fn vs_main(
     // 5) Final clip‐space
     out.clip_pos = u_view_proj * vec4<f32>(world_pos3, 1.0);
     out.world_pos = world_pos3;
-    out.uv = uv;
-    out.color = instance_data.color;
 
     return out;
 }
@@ -59,6 +54,5 @@ fn vs_main(
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     // Simple height‐based shading
     let shade = vec3<f32>(in.world_pos.z / HEIGHT_SCALE);
-    let color = mix(in.color.xyz, shade, 0.995);
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(shade, 1.0);
 }

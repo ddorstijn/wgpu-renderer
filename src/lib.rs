@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use glam::{Mat4, Vec3, Vec3Swizzles};
+use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -54,7 +54,7 @@ impl State {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::GL, // The only one that works with renderdoc
+            backends: wgpu::Backends::VULKAN, // The only one that works with renderdoc
             ..Default::default()
         });
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -234,7 +234,7 @@ impl State {
             Path::new("assets/heightmap_big.png"),
         )?;
 
-        terrain.update(&queue, camera.eye.xy());
+        terrain.update(&queue, &camera);
 
         Ok(Self {
             window,
@@ -271,7 +271,7 @@ impl State {
     pub fn update(&mut self, delta_time: Duration) {
         self.camera_controller
             .update_camera(&mut self.camera, delta_time);
-        self.terrain.update(&self.queue, self.camera.eye.xy());
+        self.terrain.update(&self.queue, &self.camera);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -296,16 +296,6 @@ impl State {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Compute pass"),
-                timestamp_writes: None,
-            });
-
-            self.terrain
-                .gpu_update(&mut compute_pass, &self.camera_bind_group);
-        }
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

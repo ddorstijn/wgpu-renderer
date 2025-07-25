@@ -1,8 +1,8 @@
-use crate::{model::VertexAttribute, texture, util::create_render_pipeline};
+use crate::{camera::Camera, model::VertexAttribute, texture, util::create_render_pipeline};
 use const_for::const_for;
-use glam::{Mat4, Quat, Vec2, Vec3, Vec3Swizzles, quat};
+use glam::{Mat4, Quat, Vec2, Vec3Swizzles, quat};
 use std::path::Path;
-use wgpu::{util::DeviceExt, wgt::BufferDescriptor};
+use wgpu::util::DeviceExt;
 
 const SCALE_OFFSET: usize = 5;
 const N_LEVELS: usize = 10;
@@ -23,69 +23,6 @@ const ROTATIONS: [Quat; 4] = [
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct InstanceData {
     transform: Mat4,
-    aabb_min: Vec3,
-    aabb_max: Vec3,
-    level: usize,
-}
-
-struct IndirectInfo {
-    pub compute_bf: wgpu::Buffer,
-    pub compute_bg: wgpu::BindGroup,
-}
-
-impl IndirectInfo {
-    pub fn new(
-        device: &wgpu::Device,
-        indirect_bgl: &wgpu::BindGroupLayout,
-        instance_bf: &wgpu::Buffer,
-        index_count: u32,
-        instance_count: u32,
-    ) -> Self {
-        let indirect_args = wgpu::util::DrawIndexedIndirectArgs {
-            index_count,
-            instance_count,
-            ..Default::default()
-        };
-        let compute_bf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Indirect Buffer"),
-            contents: indirect_args.as_bytes(),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let visible_bf = device.create_buffer(&BufferDescriptor {
-            label: Some("Visible Buffer"),
-            size: (std::mem::size_of::<InstanceData>() * N_TILES) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        });
-
-        // The compute bind group itself
-        let compute_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Compute Bind Group"),
-            layout: indirect_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_bf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: compute_bf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: visible_bf.as_entire_binding(),
-                },
-            ],
-        });
-
-        Self {
-            compute_bf,
-            compute_bg,
-        }
-    }
 }
 
 struct TerrainComponent {
@@ -95,16 +32,10 @@ struct TerrainComponent {
     vertex_bf: wgpu::Buffer,
     index_bf: wgpu::Buffer,
     index_count: usize,
-    indirect_info: Option<IndirectInfo>,
 }
 
 impl TerrainComponent {
-    pub fn new(
-        device: &wgpu::Device,
-        instance_bgl: &wgpu::BindGroupLayout,
-        mesh: Mesh2d,
-        indirect_bgl: Option<&wgpu::BindGroupLayout>,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, instance_bgl: &wgpu::BindGroupLayout, mesh: Mesh2d) -> Self {
         let instance_bf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
             size: std::mem::size_of::<InstanceData>() as u64 * mesh.instance_count as u64,
@@ -121,16 +52,6 @@ impl TerrainComponent {
             }],
         });
 
-        let indirect_info = indirect_bgl.map(|bgl| {
-            IndirectInfo::new(
-                device,
-                bgl,
-                &instance_bf,
-                mesh.index_count as u32,
-                mesh.instance_count as u32,
-            )
-        });
-
         Self {
             instance_bf,
             instance_bg,
@@ -138,7 +59,6 @@ impl TerrainComponent {
             index_bf: mesh.index_buffer(device),
             index_count: mesh.index_count,
             instance_count: mesh.instance_count,
-            indirect_info,
         }
     }
 }
@@ -156,15 +76,11 @@ where
         self.set_bind_group(2, &component.instance_bg, &[]);
         self.set_vertex_buffer(0, component.vertex_bf.slice(..));
         self.set_index_buffer(component.index_bf.slice(..), wgpu::IndexFormat::Uint32);
-        if let Some(info) = &component.indirect_info {
-            self.draw_indexed_indirect(&info.compute_bf, 0);
-        } else {
-            self.draw_indexed(
-                0..component.index_count as u32,
-                0,
-                0..component.instance_count as u32,
-            );
-        }
+        self.draw_indexed(
+            0..component.index_count as u32,
+            0,
+            0..component.instance_count as u32,
+        );
     }
 }
 
@@ -174,7 +90,6 @@ pub struct TerrainSystem {
     heightmap_bf: texture::Texture, // Later used for editing
     heightmap_bg: wgpu::BindGroup,
 
-    compute_pipeline: wgpu::ComputePipeline,
     render_pipeline: wgpu::RenderPipeline,
 
     tile: TerrainComponent,
@@ -232,43 +147,6 @@ impl TerrainSystem {
             }],
         });
 
-        let compute_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Compute Bind Group Layout"),
-            entries: &[
-                // All Instances, Visible Instances, Indirect Command
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
         // --- Bind Groups ---
         let heightmap_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Terrain Heightmap BG"),
@@ -283,24 +161,6 @@ impl TerrainSystem {
                     resource: wgpu::BindingResource::Sampler(&heightmap_bf.sampler),
                 },
             ],
-        });
-
-        // --- The compute pipeline ---
-        let compute_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Compute Pipeline Layout"),
-                bind_group_layouts: &[&compute_bgl, camera_bgl],
-                push_constant_ranges: &[],
-            });
-
-        let compute_shader = wgpu::include_wgsl!("terrain_cull.wgsl");
-        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Culling Compute Pipeline"),
-            layout: Some(&compute_pipeline_layout),
-            module: &device.create_shader_module(compute_shader),
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
         });
 
         // --- Render Pipeline ---
@@ -319,18 +179,17 @@ impl TerrainSystem {
             wgpu::include_wgsl!("terrain.wgsl"),
         );
 
-        let tile = TerrainComponent::new(device, &instance_bgl, TILE_MESH, Some(&compute_bgl));
-        let cross = TerrainComponent::new(device, &instance_bgl, CROSS_MESH, None);
-        let fill = TerrainComponent::new(device, &instance_bgl, FILLER_MESH, None);
-        let trim = TerrainComponent::new(device, &instance_bgl, TRIM_MESH, None);
-        let seam = TerrainComponent::new(device, &instance_bgl, SEAM_MESH, None);
+        let tile = TerrainComponent::new(device, &instance_bgl, TILE_MESH);
+        let cross = TerrainComponent::new(device, &instance_bgl, CROSS_MESH);
+        let fill = TerrainComponent::new(device, &instance_bgl, FILLER_MESH);
+        let trim = TerrainComponent::new(device, &instance_bgl, TRIM_MESH);
+        let seam = TerrainComponent::new(device, &instance_bgl, SEAM_MESH);
 
         Ok(Self {
             heightmap_bf,
             heightmap_bg,
 
             render_pipeline,
-            compute_pipeline,
 
             tile,
             cross,
@@ -340,13 +199,15 @@ impl TerrainSystem {
         })
     }
 
-    pub fn update(&mut self, queue: &wgpu::Queue, camera_position: Vec2) {
+    pub fn update(&mut self, queue: &wgpu::Queue, camera: &Camera) {
         // We'll accumulate instance data here
         let mut tile_data = Vec::new();
         let mut filler_data = Vec::new();
         let mut trim_data = Vec::new();
         let mut cross_data = Vec::new();
         let mut seam_data = Vec::new();
+
+        let camera_position = camera.eye.xy();
 
         // The main 4×4 tile ring & filler/trim/seam per level
         for level in 0..N_LEVELS {
@@ -366,12 +227,7 @@ impl TerrainSystem {
                     Quat::IDENTITY,
                     snapped_pos.extend(0.0),
                 );
-                cross_data.push(InstanceData {
-                    transform,
-                    aabb_min: Vec3::ZERO,
-                    aabb_max: Vec3::ZERO,
-                    level,
-                });
+                cross_data.push(InstanceData { transform });
             }
 
             // --- 4×4 Tiles (skip middle 2×2 if not finest) ---
@@ -388,18 +244,12 @@ impl TerrainSystem {
                     ) * scale;
 
                     let bl = base + pos * tile_size + fill;
-                    let tr = base - pos * tile_size - fill;
                     let transform = Mat4::from_scale_rotation_translation(
                         v_scale,
                         Quat::IDENTITY,
                         bl.extend(0.0),
                     );
-                    tile_data.push(InstanceData {
-                        transform,
-                        aabb_min: bl.extend(0.0),
-                        aabb_max: tr.extend(0.0),
-                        level,
-                    });
+                    tile_data.push(InstanceData { transform });
                 }
             }
 
@@ -410,12 +260,7 @@ impl TerrainSystem {
                     Quat::IDENTITY,
                     snapped_pos.extend(0.0),
                 );
-                filler_data.push(InstanceData {
-                    transform,
-                    aabb_min: Vec3::ZERO,
-                    aabb_max: Vec3::ZERO,
-                    level,
-                });
+                filler_data.push(InstanceData { transform });
             }
 
             // Trim and seam are not generated for the finest level
@@ -432,12 +277,7 @@ impl TerrainSystem {
                     next_base.extend(0.0),
                 );
 
-                seam_data.push(InstanceData {
-                    transform,
-                    aabb_min: Vec3::ZERO,
-                    aabb_max: Vec3::ZERO,
-                    level,
-                });
+                seam_data.push(InstanceData { transform });
 
                 // --- Trim ---
                 let d = camera_position - next_snap;
@@ -450,12 +290,7 @@ impl TerrainSystem {
                     center.extend(0.0),
                 );
 
-                trim_data.push(InstanceData {
-                    transform,
-                    aabb_min: Vec3::ZERO,
-                    aabb_max: Vec3::ZERO,
-                    level,
-                });
+                trim_data.push(InstanceData { transform });
             }
         }
 
@@ -475,21 +310,6 @@ impl TerrainSystem {
         );
     }
 
-    pub fn gpu_update(&self, compute_pass: &mut wgpu::ComputePass, camera_bg: &wgpu::BindGroup) {
-        compute_pass.set_pipeline(&self.compute_pipeline);
-        compute_pass.set_bind_group(
-            0,
-            &self.tile.indirect_info.as_ref().unwrap().compute_bg,
-            &[],
-        );
-        compute_pass.set_bind_group(1, camera_bg, &[]);
-        let workgroup_size_x = 256; // Must match WGSL's @workgroup_size(X, Y, Z)
-        let num_objects = self.tile.instance_count as u32;
-        // Calculate the number of workgroups needed to cover all objects
-        let dispatch_x = (num_objects + workgroup_size_x - 1) / workgroup_size_x;
-        compute_pass.dispatch_workgroups(dispatch_x, 1, 1);
-    }
-
     pub fn render<'a>(
         &'a self,
         rpass: &mut wgpu::RenderPass<'a>,
@@ -502,10 +322,10 @@ impl TerrainSystem {
         rpass.set_bind_group(1, &self.heightmap_bg, &[]);
 
         rpass.draw_terrain(&self.tile);
-        // rpass.draw_terrain(&self.cross);
-        // rpass.draw_terrain(&self.fill);
-        // rpass.draw_terrain(&self.trim);
-        // rpass.draw_terrain(&self.seam);
+        rpass.draw_terrain(&self.cross);
+        rpass.draw_terrain(&self.fill);
+        rpass.draw_terrain(&self.trim);
+        rpass.draw_terrain(&self.seam);
     }
 }
 
