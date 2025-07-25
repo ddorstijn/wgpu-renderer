@@ -20,5 +20,5 @@ log = "0.4.27"
 ordered-float = "5.0.0"
 pollster = "0.4.0"
 tobj = "4.0.3"
-wgpu = "26.0.1"
+wgpu = { git = "https://github.com/gfx-rs/wgpu", version = "26.0.0" }
 winit = "0.30.11"
