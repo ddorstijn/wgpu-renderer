@@ -10,27 +10,21 @@ use winit::{
 
 pub use winit::{event::MouseButton, keyboard::KeyCode};
 
-pub struct App {
-    state: Option<State>,
-    world: World,
-    last_frame_instant: Instant,
+pub struct WreWindow {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
 }
 
-impl App {
+impl WreWindow {
     pub fn new() -> Self {
-        Self {
-            state: None,
-            world: World::new(),
-            last_frame_instant: Instant::now(),
-        }
+        Self {}
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler for WreWindow {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes();
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-        self.state = Some(pollster::block_on(T::new(window)).unwrap());
     }
 
     fn window_event(

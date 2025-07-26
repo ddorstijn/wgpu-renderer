@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
-pub struct State {
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
+pub struct WreRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
 }
 
-impl State {
+impl WreRenderer {
     pub(crate) async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
 
