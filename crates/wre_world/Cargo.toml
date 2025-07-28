@@ -4,6 +4,3 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wre_camera = { path = "../wre_camera" }
-wre_terrain = { path = "../wre_terrain" }
-glam = { workspace = true }

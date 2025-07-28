@@ -1,9 +1,0 @@
-[package]
-name = "wre_player"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-wre_camera = { path = "../wre_camera" }
-wre_input = { path = "../wre_input" }
-glam = { workspace = true }

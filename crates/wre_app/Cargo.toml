@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+winit = { workspace = true }
 wre_window = { path = "../wre_window" }
 wre_renderer = { path = "../wre_renderer" }
 wre_world = { path = "../wre_world" }
-winit = { workspace = true }
+wre_input = { path = "../wre_input" }

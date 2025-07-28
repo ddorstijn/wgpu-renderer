@@ -3,7 +3,7 @@ use std::collections::HashSet;
 pub use wre_window::KeyCode;
 
 #[derive(Default, Debug)]
-pub struct InputState {
+pub struct WreInput {
     pub pressed_keys: HashSet<KeyCode>,
     pub just_pressed_keys: HashSet<KeyCode>,
     pub just_released_keys: HashSet<KeyCode>,
@@ -21,7 +21,7 @@ pub struct InputState {
     previous_pressed_mouse_buttons: HashSet<MouseButton>,
 }
 
-impl InputState {
+impl WreInput {
     pub fn new() -> Self {
         Self::default()
     }

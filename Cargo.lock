@@ -2659,6 +2659,8 @@ dependencies = [
 name = "wre_app"
 version = "0.1.0"
 dependencies = [
+ "winit",
+ "wre_input",
  "wre_renderer",
  "wre_window",
  "wre_world",
@@ -2695,19 +2697,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "wre_player"
-version = "0.1.0"
-dependencies = [
- "glam",
- "wre_camera",
- "wre_input",
-]
-
-[[package]]
 name = "wre_renderer"
 version = "0.1.0"
 dependencies = [
  "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -2737,11 +2731,6 @@ dependencies = [
 [[package]]
 name = "wre_world"
 version = "0.1.0"
-dependencies = [
- "glam",
- "wre_camera",
- "wre_terrain",
-]
 
 [[package]]
 name = "x11-dl"
