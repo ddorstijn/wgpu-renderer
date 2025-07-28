@@ -1,3 +1,3 @@
 pub trait WorldEntity {
-    fn update();
+    fn update(&self);
 }

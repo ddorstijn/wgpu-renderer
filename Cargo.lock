@@ -139,6 +139,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
+name = "anymap3"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "170433209e817da6aae2c51aa0dd443009a613425dd041ebfb2492d1c4c11a25"
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2718,6 +2724,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wre_transform"
+version = "0.1.0"
+dependencies = [
+ "glam",
+]
+
+[[package]]
 name = "wre_window"
 version = "0.1.0"
 dependencies = [
@@ -2731,6 +2744,11 @@ dependencies = [
 [[package]]
 name = "wre_world"
 version = "0.1.0"
+dependencies = [
+ "anymap3",
+ "slotmap",
+ "wre_transform",
+]
 
 [[package]]
 name = "x11-dl"
