@@ -130,12 +130,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 
 [[package]]
-name = "anymap3"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "170433209e817da6aae2c51aa0dd443009a613425dd041ebfb2492d1c4c11a25"
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -303,12 +297,6 @@ checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
 ]
-
-[[package]]
-name = "const_for"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c50fcfdf972929aff202c16b80086aa3cfc6a3a820af714096c58c7c1d0582"
 
 [[package]]
 name = "core-foundation"
@@ -1276,15 +1264,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04dc19736151f35336d325007ac991178d504a119863a2fcb3758cdb5e52c50d"
 
 [[package]]
-name = "slotmap"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbff4acf519f630b3a3ddcfaea6c06b42174d9a44bc70c620e9ed1649d58b82a"
-dependencies = [
- "version_check",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2103,17 +2082,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wre_terrain"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "const_for",
- "glam",
- "thiserror 2.0.15",
- "wre_camera",
-]
-
-[[package]]
 name = "wre_transform"
 version = "0.1.0"
 dependencies = [
@@ -2134,8 +2102,6 @@ dependencies = [
 name = "wre_world"
 version = "0.1.0"
 dependencies = [
- "anymap3",
- "slotmap",
  "wre_transform",
 ]
 
