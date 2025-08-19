@@ -1,26 +1,37 @@
 #![feature(const_index)]
 #![feature(const_trait_impl)]
 
-use std::path::Path;
+use std::path::PathBuf;
 
-use crate::{
-    component::{DrawTerrainComponent, TerrainComponent},
-    consts::{
-        CROSS_MESH, FILLER_MESH, Mesh2d, N_LEVELS, ROTATIONS, SCALE_OFFSET, SEAM_MESH, TILE_MESH,
-        TILE_RES, TRIM_MESH,
-    },
+use crate::consts::{
+    CROSS_MESH, FILLER_MESH, Mesh2d, N_LEVELS, ROTATIONS, SCALE_OFFSET, SEAM_MESH, TILE_MESH,
+    TILE_RES, TRIM_MESH,
 };
 use glam::{Mat4, Quat, Vec2, Vec3Swizzles};
 use wre_camera::Camera;
-use wre_model::{VertexAttribute, texture::Texture};
 
-mod component;
 mod consts;
+
+pub struct TerrainComponent {
+    pub instances: Vec<InstanceData>,
+    pub positions: Vec<Vec2>,
+    pub indices: Vec<u32>,
+}
+
+impl From<Mesh2d> for TerrainComponent {
+    fn from(mesh: Mesh2d) -> Self {
+        Self {
+            instances: Vec::new(),
+            positions: mesh.positions.to_vec(),
+            indices: mesh.indices.to_vec(),
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum TerrainError {
-    #[error("Terrain [IO] texture error: {0}")]
-    TextureLoadError(#[from] wre_model::texture::TextureError),
+    #[error("Terrain [IO] error:")]
+    TempError,
 }
 
 #[repr(C)]
@@ -32,11 +43,7 @@ pub(crate) struct InstanceData {
 // In your main render state or engine structure
 pub struct Terrain {
     #[allow(unused)]
-    heightmap_bf: Texture, // Later used for editing
-    heightmap_bg: wgpu::BindGroup,
-
-    render_pipeline: wgpu::RenderPipeline,
-
+    heightmap: PathBuf,
     tile: TerrainComponent,
     cross: TerrainComponent,
     fill: TerrainComponent,
@@ -45,148 +52,15 @@ pub struct Terrain {
 }
 
 impl Terrain {
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        camera_bgl: &wgpu::BindGroupLayout,
-        render_format: wgpu::TextureFormat,
-        heightmap_path: &Path,
-    ) -> Result<Self, TerrainError> {
-        let heightmap_bf = wre_model::texture::Texture::from_heightmap(
-            "Heightmap",
-            device,
-            queue,
-            heightmap_path,
-        )?;
-
-        // --- Bind Group Layouts ---
-        let heightmap_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Terrain Heightmap BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let instance_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("TerrainComponent BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        // --- Bind Groups ---
-        let heightmap_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Terrain Heightmap BG"),
-            layout: &heightmap_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&heightmap_bf.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&heightmap_bf.sampler),
-                },
-            ],
-        });
-
-        // --- Render Pipeline ---
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Terrain Pipeline Layout"),
-                bind_group_layouts: &[camera_bgl, &heightmap_bgl, &instance_bgl],
-                push_constant_ranges: &[],
-            });
-
-        let shader = device.create_shader_module(wgpu::include_wgsl!("terrain.wgsl"));
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Mesh2d::desc()],
-                compilation_options: Default::default(),
-            },
-
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: render_format,
-                    blend: Some(wgpu::BlendState {
-                        alpha: wgpu::BlendComponent::REPLACE,
-                        color: wgpu::BlendComponent::REPLACE,
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-
-            multiview: None,
-            cache: None,
-        });
-
-        let tile = TerrainComponent::new(device, &instance_bgl, TILE_MESH);
-        let cross = TerrainComponent::new(device, &instance_bgl, CROSS_MESH);
-        let fill = TerrainComponent::new(device, &instance_bgl, FILLER_MESH);
-        let trim = TerrainComponent::new(device, &instance_bgl, TRIM_MESH);
-        let seam = TerrainComponent::new(device, &instance_bgl, SEAM_MESH);
+    pub fn new(heightmap: PathBuf) -> Result<Self, TerrainError> {
+        let tile = TerrainComponent::from(TILE_MESH);
+        let cross = TerrainComponent::from(CROSS_MESH);
+        let fill = TerrainComponent::from(FILLER_MESH);
+        let trim = TerrainComponent::from(TRIM_MESH);
+        let seam = TerrainComponent::from(SEAM_MESH);
 
         Ok(Self {
-            heightmap_bf,
-            heightmap_bg,
-
-            render_pipeline,
-
+            heightmap,
             tile,
             cross,
             fill,
@@ -195,13 +69,13 @@ impl Terrain {
         })
     }
 
-    pub fn update(&mut self, queue: &wgpu::Queue, camera: &Camera) {
+    pub fn update(&mut self, camera: &Camera) {
         // We'll accumulate instance data here
-        let mut tile_data = Vec::new();
-        let mut filler_data = Vec::new();
-        let mut trim_data = Vec::new();
-        let mut cross_data = Vec::new();
-        let mut seam_data = Vec::new();
+        self.tile.instances = Vec::new();
+        self.fill.instances = Vec::new();
+        self.trim.instances = Vec::new();
+        self.cross.instances = Vec::new();
+        self.seam.instances = Vec::new();
 
         let camera_position = camera.eye.xy();
 
@@ -223,7 +97,7 @@ impl Terrain {
                     Quat::IDENTITY,
                     snapped_pos.extend(0.0),
                 );
-                cross_data.push(InstanceData { transform });
+                self.cross.instances.push(InstanceData { transform });
             }
 
             // --- 4×4 Tiles (skip middle 2×2 if not finest) ---
@@ -245,7 +119,7 @@ impl Terrain {
                         Quat::IDENTITY,
                         bl.extend(0.0),
                     );
-                    tile_data.push(InstanceData { transform });
+                    self.tile.instances.push(InstanceData { transform });
                 }
             }
 
@@ -256,7 +130,7 @@ impl Terrain {
                     Quat::IDENTITY,
                     snapped_pos.extend(0.0),
                 );
-                filler_data.push(InstanceData { transform });
+                self.fill.instances.push(InstanceData { transform });
             }
 
             // Trim and seam are not generated for the finest level
@@ -273,7 +147,7 @@ impl Terrain {
                     next_base.extend(0.0),
                 );
 
-                seam_data.push(InstanceData { transform });
+                self.seam.instances.push(InstanceData { transform });
 
                 // --- Trim ---
                 let d = camera_position - next_snap;
@@ -286,41 +160,8 @@ impl Terrain {
                     center.extend(0.0),
                 );
 
-                trim_data.push(InstanceData { transform });
+                self.trim.instances.push(InstanceData { transform });
             }
         }
-
-        // 3) Upload each to its GPU buffer
-        queue.write_buffer(&self.tile.instance_bf, 0, bytemuck::cast_slice(&tile_data));
-        queue.write_buffer(
-            &self.cross.instance_bf,
-            0,
-            bytemuck::cast_slice(&cross_data),
-        );
-        queue.write_buffer(&self.seam.instance_bf, 0, bytemuck::cast_slice(&seam_data));
-        queue.write_buffer(&self.trim.instance_bf, 0, bytemuck::cast_slice(&trim_data));
-        queue.write_buffer(
-            &self.fill.instance_bf,
-            0,
-            bytemuck::cast_slice(&filler_data),
-        );
-    }
-
-    pub fn render<'a>(
-        &'a self,
-        rpass: &mut wgpu::RenderPass<'a>,
-        camera_bind_group: &'a wgpu::BindGroup,
-    ) {
-        rpass.set_pipeline(&self.render_pipeline);
-
-        // shared bind groups
-        rpass.set_bind_group(0, camera_bind_group, &[]);
-        rpass.set_bind_group(1, &self.heightmap_bg, &[]);
-
-        rpass.draw_terrain(&self.tile);
-        rpass.draw_terrain(&self.cross);
-        rpass.draw_terrain(&self.fill);
-        rpass.draw_terrain(&self.trim);
-        rpass.draw_terrain(&self.seam);
     }
 }

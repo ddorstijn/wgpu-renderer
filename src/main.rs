@@ -1,3 +1,1 @@
-fn main() {
-    road::run().unwrap();
-}
+fn main() {}

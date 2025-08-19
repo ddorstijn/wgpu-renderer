@@ -1,12 +1,6 @@
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
-use winit::{
-    application::ApplicationHandler,
-    event::{KeyEvent, WindowEvent},
-    event_loop::{self, ActiveEventLoop},
-    keyboard::PhysicalKey,
-    window::{Window, WindowId},
-};
+use winit::{event_loop::ActiveEventLoop, window::Window};
 
 pub use winit::{event::MouseButton, keyboard::KeyCode};
 

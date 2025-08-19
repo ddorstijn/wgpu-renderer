@@ -10,5 +10,4 @@ crate-type = ["rlib"]
 pollster = "0.4.0"
 log = { workspace = true }
 winit = { workspace = true }
-wgpu = { workspace = true }
 wre_world = { path = "../wre_world" }

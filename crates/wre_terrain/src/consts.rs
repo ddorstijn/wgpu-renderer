@@ -1,7 +1,5 @@
 use const_for::const_for;
 use glam::{Quat, Vec2, quat};
-use wgpu::util::DeviceExt;
-use wre_model::VertexAttribute;
 
 pub(crate) const ROTATIONS: [Quat; 4] = [
     Quat::IDENTITY,
@@ -46,43 +44,11 @@ const I_MAX: usize = I_TILE;
 #[derive(Debug)]
 pub struct Mesh2d {
     pub label: &'static str,
-    pub vertices: [Vec2; V_MAX],
+    pub positions: [Vec2; V_MAX],
     pub indices: [u32; I_MAX],
     pub vertex_count: usize,
     pub index_count: usize,
     pub instance_count: usize,
-}
-
-impl Mesh2d {
-    pub fn vertex_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some((self.label.to_owned() + "Vertex Buffer").as_str()),
-            contents: bytemuck::cast_slice(&self.vertices[0..self.vertex_count]),
-            usage: wgpu::BufferUsages::VERTEX,
-        })
-    }
-
-    pub fn index_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some((self.label.to_owned() + "Index Buffer").as_str()),
-            contents: bytemuck::cast_slice(&self.indices[0..self.index_count]),
-            usage: wgpu::BufferUsages::INDEX,
-        })
-    }
-}
-
-impl VertexAttribute for Mesh2d {
-    const ATTRIBS: &'static [wgpu::VertexAttribute] = &wgpu::vertex_attr_array![
-        0 => Float32x2,
-    ];
-
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vec2>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: Self::ATTRIBS,
-        }
-    }
 }
 
 const fn generate_tile_mesh() -> Mesh2d {
@@ -111,7 +77,7 @@ const fn generate_tile_mesh() -> Mesh2d {
 
     Mesh2d {
         label: "Tile",
-        vertices,
+        positions: vertices,
         indices,
         vertex_count: V_TILE,
         index_count: I_TILE,
@@ -180,7 +146,7 @@ const fn generate_filler_mesh() -> Mesh2d {
 
     Mesh2d {
         label: "Filler",
-        vertices,
+        positions: vertices,
         indices,
         vertex_count: V_FILL,
         index_count: I_FILL,
@@ -246,7 +212,7 @@ const fn generate_trim_mesh() -> Mesh2d {
 
     Mesh2d {
         label: "Trim",
-        vertices,
+        positions: vertices,
         indices,
         vertex_count: V_TRIM,
         index_count: I_TRIM,
@@ -314,7 +280,7 @@ const fn generate_cross_mesh() -> Mesh2d {
 
     Mesh2d {
         label: "Cross",
-        vertices,
+        positions: vertices,
         indices,
         vertex_count: V_CROSS,
         index_count: I_CROSS,
@@ -349,7 +315,7 @@ const fn generate_seam_mesh() -> Mesh2d {
 
     Mesh2d {
         label: "Seam",
-        vertices,
+        positions: vertices,
         indices,
         vertex_count: V_SEAM,
         index_count: I_SEAM,
