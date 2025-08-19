@@ -1,5 +1,5 @@
 [package]
-name = "road"
+name = "wre"
 version = "0.1.0"
 edition = "2024"
 
@@ -14,6 +14,7 @@ opt-level = 1
 anyhow = "1.0.99"
 env_logger = "0.11.8"
 pollster = "0.4.0"
+wre_app = { path = "crates/wre_app" }
 
 [workspace.dependencies]
 bytemuck = "1.23.2"

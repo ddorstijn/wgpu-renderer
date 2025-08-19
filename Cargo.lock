@@ -1157,15 +1157,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
-name = "road"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "env_logger",
- "pollster",
-]
-
-[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2034,6 +2025,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wre"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "pollster",
+ "wre_app",
+]
+
+[[package]]
 name = "wre_app"
 version = "0.1.0"
 dependencies = [
@@ -2050,10 +2051,6 @@ version = "0.1.0"
 dependencies = [
  "glam",
 ]
-
-[[package]]
-name = "wre_collision"
-version = "0.1.0"
 
 [[package]]
 name = "wre_input"
@@ -2082,13 +2079,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wre_transform"
-version = "0.1.0"
-dependencies = [
- "glam",
-]
-
-[[package]]
 name = "wre_window"
 version = "0.1.0"
 dependencies = [
@@ -2101,9 +2091,6 @@ dependencies = [
 [[package]]
 name = "wre_world"
 version = "0.1.0"
-dependencies = [
- "wre_transform",
-]
 
 [[package]]
 name = "x11-dl"

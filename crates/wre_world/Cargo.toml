@@ -4,4 +4,3 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wre_transform = { path = "../wre_transform" }
