@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
-use ash::vk::{ColorSpaceKHR, Extent2D, ImageUsageFlags, PresentModeKHR, SurfaceFormatKHR};
+use ash::vk::{
+    ColorSpaceKHR, Extent2D, Format, Image, ImageUsageFlags, ImageView,
+    PhysicalDeviceVulkan12Features, PhysicalDeviceVulkan13Features, PresentModeKHR,
+    SurfaceFormat2KHR, SurfaceFormatKHR,
+};
 use ash_bootstrap::{
-    DeviceBuilder, Instance, InstanceBuilder, PhysicalDeviceSelector, PreferredDeviceType,
+    Device, DeviceBuilder, Instance, InstanceBuilder, PhysicalDeviceSelector, PreferredDeviceType,
     QueueType, Swapchain, SwapchainBuilder,
 };
-use winit::raw_window_handle::HasDisplayHandle;
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RendererError {
@@ -21,38 +25,30 @@ pub enum RendererError {
 
 pub struct WreRenderer {
     instance: Arc<Instance>,
-    device: Arc<ash_bootstrap::Device>,
+    device: Arc<Device>,
     swapchain: Option<Swapchain>,
+    swapchain_images: Vec<Image>,
+    swapchain_image_views: Vec<ImageView>,
 }
 
 impl WreRenderer {
     pub fn new(window: Arc<winit::window::Window>) -> Result<Self, RendererError> {
-        let instance = InstanceBuilder::new(window.clone())
-            .app_name("Example Vulkan Application")
-            .engine_name("Example Vulkan Engine")
-            .request_validation_layers(true)
-            .build()?;
+        let instance =
+            InstanceBuilder::new(Some((window.window_handle()?, window.display_handle()?)))
+                .app_name("Example Vulkan Application")
+                .engine_name("Example Vulkan Engine")
+                .request_validation_layers(true)
+                .build()?;
 
-        let surface = unsafe {
-            ash_window::create_surface(
-                &entry,
-                &instance,
-                window.display_handle()?.as_raw(),
-                window.window_handle()?.as_raw(),
-                None,
-            )
-        }?;
-
-        let features12 = ash::vk::PhysicalDeviceVulkan12Features::default()
+        let features12 = PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .descriptor_indexing(true);
 
-        let features13 = ash::vk::PhysicalDeviceVulkan13Features::default()
+        let features13 = PhysicalDeviceVulkan13Features::default()
             .synchronization2(true)
             .dynamic_rendering(true);
 
         let physical_device = PhysicalDeviceSelector::new(instance.clone())
-            .surface(surface)
             .preferred_device_type(PreferredDeviceType::Discrete)
             .add_required_extension_feature(features12)
             .add_required_extension_feature(features13)
@@ -61,40 +57,47 @@ impl WreRenderer {
         let device = Arc::new(DeviceBuilder::new(physical_device, instance.clone()).build()?);
         let (_graphics_queue_index, _graphics_queue) = device.get_queue(QueueType::Graphics)?;
 
-        let renderer = Self {
+        let mut renderer = Self {
             instance,
             device,
             swapchain: None,
+            swapchain_images: Vec::new(),
+            swapchain_image_views: Vec::new(),
         };
 
         let size = window.inner_size();
-        renderer.create_swapchain(size.width, size.height);
+        renderer.init_swapchain(size.width, size.height)?;
 
         Ok(renderer)
     }
 
-    fn create_swapchain(&self, width: u32, height: u32) -> Swapchain {
+    fn init_swapchain(&mut self, width: u32, height: u32) -> Result<(), ash_bootstrap::Error> {
         let swapchain_builder = SwapchainBuilder::new(self.instance.clone(), self.device.clone());
-        let swapchain_image_format = ash::vk::Format::B8G8R8A8_UNORM;
+        let swapchain_image_format = Format::B8G8R8A8_UNORM;
+        let surface_format = SurfaceFormat2KHR {
+            surface_format: SurfaceFormatKHR {
+                format: swapchain_image_format,
+                color_space: ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+            ..Default::default()
+        };
 
-        let swapchain = swapchain_builder
-            .desired_format(ash::vk::SurfaceFormat2KHR::default().surface_format(
-                SurfaceFormatKHR {
-                    format: swapchain_image_format,
-                    color_space: ColorSpaceKHR::SRGB_NONLINEAR,
-                },
-            ))
-            .desired_present_mode(PresentModeKHR::FIFO)
+        let builder = swapchain_builder
+            .desired_format(surface_format)
+            .desired_present_mode(PresentModeKHR::MAILBOX)
             .desired_size(Extent2D { width, height })
-            .image_usage_flags(ImageUsageFlags::TRANSFER_DST)
-            .build()
-            .unwrap();
+            .add_image_usage_flags(ImageUsageFlags::TRANSFER_DST);
 
-        let _swapchain_image_format = swapchain.image_format;
-        let _swapchain_images = swapchain.get_images();
-        let _swapchain_image_views = swapchain.get_image_views();
+        if let Some(old) = self.swapchain.take() {
+            builder.set_old_swapchain(old);
+        }
 
-        swapchain
+        let swapchain = builder.build()?;
+        self.swapchain_images = swapchain.get_images()?;
+        self.swapchain_image_views = swapchain.get_image_views()?;
+        self.swapchain = Some(swapchain);
+
+        Ok(())
     }
 
     pub fn render(&mut self) -> Result<(), ()> {
@@ -104,12 +107,17 @@ impl WreRenderer {
 
 impl Drop for WreRenderer {
     fn drop(&mut self) {
-        //ERROR - Instance destroyed before others
-        self.instance.destroy();
         if let Some(s) = &self.swapchain {
+            for image_view in self.swapchain_image_views.drain(..) {
+                unsafe {
+                    self.device.destroy_image_view(image_view, None);
+                }
+            }
+
             s.destroy();
         }
 
         self.device.destroy();
+        self.instance.destroy();
     }
 }
