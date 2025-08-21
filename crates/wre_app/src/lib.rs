@@ -38,6 +38,7 @@ impl<T> ApplicationHandler for WreApp<T> {
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
         self.renderer = Some(WreRenderer::new(window.clone()).unwrap());
         self.window = Some(window.clone());
+        println!("Application is initialized.");
     }
 
     fn window_event(
@@ -46,8 +47,25 @@ impl<T> ApplicationHandler for WreApp<T> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        if let WindowEvent::CloseRequested = event {
-            event_loop.exit();
+        let renderer = if let Some(r) = &mut self.renderer {
+            r
+        } else {
+            return;
+        };
+
+        match event {
+            WindowEvent::Resized(size) => {
+                renderer
+                    .init_swapchain(size.width, size.height)
+                    .expect("Error creating swapchain during resize");
+            }
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            WindowEvent::RedrawRequested => {
+                renderer.render().expect("Error in renderer");
+            }
+            _ => (),
         }
     }
 
