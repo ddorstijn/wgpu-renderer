@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 winit = { workspace = true }
-wre_window = { path = "../wre_window" }
 wre_renderer = { path = "../wre_renderer" }
 wre_world = { path = "../wre_world" }
 wre_input = { path = "../wre_input" }

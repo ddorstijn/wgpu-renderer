@@ -14,6 +14,7 @@ opt-level = 1
 anyhow = "1.0.99"
 env_logger = "0.11.8"
 pollster = "0.4.0"
+winit = { workspace = true }
 wre_app = { path = "crates/wre_app" }
 
 [workspace.dependencies]

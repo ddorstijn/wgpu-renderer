@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-pub use wre_window::KeyCode;
-use wre_window::MouseButton;
+pub use winit::{event::MouseButton, keyboard::KeyCode};
 
 #[derive(Default, Debug)]
 pub struct WreInput {
