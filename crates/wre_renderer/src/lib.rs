@@ -20,6 +20,7 @@ pub enum RendererError {
     WinitError(#[from] winit::raw_window_handle::HandleError),
 }
 
+#[derive(Debug)]
 struct FrameData {
     pool: vk::CommandPool,
     buffer: vk::CommandBuffer,
@@ -136,7 +137,6 @@ impl WreRenderer {
         };
 
         let frame = self.get_current_frame();
-
         // Wait till the gpu has finished rendering the last frame. Timeout of 1 second
         unsafe {
             self.device
@@ -148,7 +148,7 @@ impl WreRenderer {
         let (swapchain_image_index, _suboptimal) = unsafe {
             swapchain.acquire_next_image(
                 *swapchain.as_ref(),
-                10000000,
+                10000000000,
                 frame.swapchain_semaphore,
                 vk::Fence::null(),
             )
