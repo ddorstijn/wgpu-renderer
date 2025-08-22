@@ -28,16 +28,16 @@ struct FrameData {
     render_fence: vk::Fence,
 }
 
-const FRAME_OVERLAP: usize = 2;
+const FRAME_OVERLAP: usize = 3;
 
 pub struct WreRenderer {
+    frame_number: usize,
     instance: Arc<Instance>,
     device: Arc<Device>,
     swapchain: Option<Swapchain>,
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     frames: [FrameData; FRAME_OVERLAP],
-    current_frame: usize,
 
     graphics_queue: vk::Queue,
 }
@@ -51,6 +51,7 @@ impl WreRenderer {
         .app_name("Example Vulkan Application")
         .engine_name("Example Vulkan Engine")
         .request_validation_layers(true)
+        .require_api_version(vk::make_api_version(0, 1, 3, 0))
         .build()?;
 
         let features12 = vk::PhysicalDeviceVulkan12Features::default()
@@ -61,24 +62,12 @@ impl WreRenderer {
             .synchronization2(true)
             .dynamic_rendering(true);
 
-        let mut physical_device = PhysicalDeviceSelector::new(instance.clone())
+        let physical_device = PhysicalDeviceSelector::new(instance.clone())
             .preferred_device_type(PreferredDeviceType::Discrete)
             .add_required_extension_feature(features12)
             .add_required_extension_feature(features13)
             .select()?;
 
-        physical_device.enable_extensions_if_present(vec![
-            ash::khr::device_group_creation::NAME.to_string_lossy(),
-            ash::khr::depth_stencil_resolve::NAME.to_string_lossy(),
-            ash::khr::maintenance3::NAME.to_string_lossy(),
-            ash::khr::synchronization2::NAME.to_string_lossy(),
-            ash::ext::descriptor_indexing::NAME.to_string_lossy(),
-            ash::khr::device_group::NAME.to_string_lossy(),
-            ash::khr::dynamic_rendering::NAME.to_string_lossy(),
-            ash::khr::buffer_device_address::NAME.to_string_lossy(),
-        ]);
-
-        dbg!(&physical_device);
         let device = Arc::new(DeviceBuilder::new(physical_device, instance.clone()).build()?);
         let (graphics_queue_family, graphics_queue) = device.get_queue(QueueType::Graphics)?;
         let graphics_queue_family = graphics_queue_family as u32;
@@ -90,6 +79,7 @@ impl WreRenderer {
         let frames = create_frames(device.clone(), command_pool_create_info)?;
 
         let mut renderer = Self {
+            frame_number: 0,
             instance,
             device,
             swapchain: None,
@@ -97,7 +87,6 @@ impl WreRenderer {
             swapchain_image_views: Vec::new(),
             graphics_queue,
             frames,
-            current_frame: 0,
         };
 
         let size = window.inner_size();
@@ -119,7 +108,7 @@ impl WreRenderer {
 
         let builder = swapchain_builder
             .desired_format(surface_format)
-            .desired_present_mode(vk::PresentModeKHR::MAILBOX)
+            .desired_present_mode(vk::PresentModeKHR::FIFO)
             .desired_size(vk::Extent2D { width, height })
             .add_image_usage_flags(vk::ImageUsageFlags::TRANSFER_DST);
 
@@ -136,7 +125,7 @@ impl WreRenderer {
     }
 
     fn get_current_frame(&self) -> &FrameData {
-        &self.frames[self.current_frame % FRAME_OVERLAP]
+        &self.frames[self.frame_number % FRAME_OVERLAP]
     }
 
     pub fn render(&mut self) -> Result<(), RendererError> {
@@ -146,27 +135,28 @@ impl WreRenderer {
             return Ok(());
         };
 
-        let frame_data = self.get_current_frame();
+        let frame = self.get_current_frame();
 
         // Wait till the gpu has finished rendering the last frame. Timeout of 1 second
         unsafe {
             self.device
-                .wait_for_fences(&[frame_data.render_fence], true, 1000000000)
+                .wait_for_fences(&[frame.render_fence], true, 1000000000)
         }?;
 
-        unsafe { self.device.reset_fences(&[frame_data.render_fence]) }?;
+        unsafe { self.device.reset_fences(&[frame.render_fence]) }?;
 
-        let aquire_next_image_info = vk::AcquireNextImageInfoKHR::default()
-            .swapchain(*swapchain.as_ref())
-            .device_mask(1)
-            .semaphore(frame_data.swapchain_semaphore)
-            .timeout(1000000000);
-
-        let (swapchain_image_index, _suboptimal) =
-            unsafe { swapchain.acquire_next_image2(&aquire_next_image_info) }?;
+        let (swapchain_image_index, _suboptimal) = unsafe {
+            swapchain.acquire_next_image(
+                *swapchain.as_ref(),
+                10000000,
+                frame.swapchain_semaphore,
+                vk::Fence::null(),
+            )
+        }?;
 
         // Shorten for ease of use
-        let cmd = frame_data.buffer;
+        let cmd = frame.buffer;
+        let image = self.swapchain_images[swapchain_image_index as usize];
 
         unsafe {
             self.device
@@ -180,26 +170,29 @@ impl WreRenderer {
         create_transition_image_barrier(
             self.device.clone(),
             cmd.clone(),
-            self.swapchain_images[swapchain_image_index as usize],
+            image,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::GENERAL,
         );
 
         // Make a clear-color from frame number. This will flash with a 120 frame period.
+        let x = (self.frame_number as f32 / 120.0).sin().abs();
         let clear_value = vk::ClearColorValue {
-            float32: [0.0, 0.0, 1.0, 1.0],
+            float32: [0.0, 0.0, x, 1.0],
         };
 
-        let clear_range =
-            vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR);
+        let clear_range = [vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(vk::REMAINING_MIP_LEVELS)
+            .layer_count(vk::REMAINING_ARRAY_LAYERS)];
 
         unsafe {
             self.device.cmd_clear_color_image(
                 cmd,
-                self.swapchain_images[swapchain_image_index as usize],
+                image,
                 vk::ImageLayout::GENERAL,
                 &clear_value,
-                &[clear_range],
+                &clear_range,
             )
         };
 
@@ -207,7 +200,7 @@ impl WreRenderer {
         create_transition_image_barrier(
             self.device.clone(),
             cmd,
-            self.swapchain_images[swapchain_image_index as usize],
+            image,
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::PRESENT_SRC_KHR,
         );
@@ -218,10 +211,10 @@ impl WreRenderer {
         let buffer_infos = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd)];
         let wait_infos = [vk::SemaphoreSubmitInfo::default()
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT_KHR)
-            .semaphore(frame_data.swapchain_semaphore)];
+            .semaphore(frame.swapchain_semaphore)];
         let signal_infos = [vk::SemaphoreSubmitInfo::default()
             .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
-            .semaphore(frame_data.render_semaphore)];
+            .semaphore(frame.render_semaphore)];
 
         let submit_info = vk::SubmitInfo2::default()
             .command_buffer_infos(&buffer_infos)
@@ -230,10 +223,10 @@ impl WreRenderer {
 
         unsafe {
             self.device
-                .queue_submit2(self.graphics_queue, &[submit_info], frame_data.render_fence)
+                .queue_submit2(self.graphics_queue, &[submit_info], frame.render_fence)
         }?;
 
-        let wait_semaphores = [frame_data.render_semaphore];
+        let wait_semaphores = [frame.render_semaphore];
         let image_indices = [swapchain_image_index];
         let swapchains = [*swapchain.as_ref()];
 
@@ -244,12 +237,16 @@ impl WreRenderer {
 
         unsafe { swapchain.queue_present(self.graphics_queue, &present_info) }?;
 
+        self.frame_number += 1;
+
         Ok(())
     }
 }
 
 impl Drop for WreRenderer {
     fn drop(&mut self) {
+        unsafe { self.device.device_wait_idle().unwrap() };
+
         for frame in &mut self.frames {
             unsafe {
                 self.device.destroy_command_pool(frame.pool, None);
@@ -325,6 +322,11 @@ fn create_transition_image_barrier(
         vk::ImageAspectFlags::COLOR
     };
 
+    let subresource_range = vk::ImageSubresourceRange::default()
+        .aspect_mask(aspect_mask)
+        .level_count(vk::REMAINING_MIP_LEVELS)
+        .layer_count(vk::REMAINING_ARRAY_LAYERS);
+
     let image_barriers = [vk::ImageMemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
@@ -332,12 +334,7 @@ fn create_transition_image_barrier(
         .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
         .old_layout(current_layout)
         .new_layout(new_layout)
-        .subresource_range(
-            vk::ImageSubresourceRange::default()
-                .aspect_mask(aspect_mask)
-                .level_count(vk::REMAINING_MIP_LEVELS)
-                .base_mip_level(vk::REMAINING_ARRAY_LAYERS),
-        )
+        .subresource_range(subresource_range)
         .image(image)];
 
     let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_barriers);
