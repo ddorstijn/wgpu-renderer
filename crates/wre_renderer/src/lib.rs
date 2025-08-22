@@ -2,8 +2,8 @@
 
 use ash::vk;
 use ash_bootstrap::{
-    Device, DeviceBuilder, Instance, InstanceBuilder, PhysicalDeviceSelector, PreferredDeviceType,
-    QueueType, Swapchain, SwapchainBuilder,
+    Device, DeviceBuilder, Instance, PhysicalDeviceSelector, PreferredDeviceType, QueueType,
+    Swapchain, SwapchainBuilder,
 };
 use std::sync::Arc;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -40,17 +40,18 @@ pub struct WreRenderer {
     current_frame: usize,
 
     graphics_queue: vk::Queue,
-    graphics_queue_family: u32,
 }
 
 impl WreRenderer {
     pub fn new(window: Arc<winit::window::Window>) -> Result<Self, RendererError> {
-        let instance =
-            InstanceBuilder::new(Some((window.window_handle()?, window.display_handle()?)))
-                .app_name("Example Vulkan Application")
-                .engine_name("Example Vulkan Engine")
-                .request_validation_layers(true)
-                .build()?;
+        let instance = ash_bootstrap::InstanceBuilder::new(Some((
+            window.window_handle()?,
+            window.display_handle()?,
+        )))
+        .app_name("Example Vulkan Application")
+        .engine_name("Example Vulkan Engine")
+        .request_validation_layers(true)
+        .build()?;
 
         let features12 = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
@@ -60,12 +61,24 @@ impl WreRenderer {
             .synchronization2(true)
             .dynamic_rendering(true);
 
-        let physical_device = PhysicalDeviceSelector::new(instance.clone())
+        let mut physical_device = PhysicalDeviceSelector::new(instance.clone())
             .preferred_device_type(PreferredDeviceType::Discrete)
             .add_required_extension_feature(features12)
             .add_required_extension_feature(features13)
             .select()?;
 
+        physical_device.enable_extensions_if_present(vec![
+            ash::khr::device_group_creation::NAME.to_string_lossy(),
+            ash::khr::depth_stencil_resolve::NAME.to_string_lossy(),
+            ash::khr::maintenance3::NAME.to_string_lossy(),
+            ash::khr::synchronization2::NAME.to_string_lossy(),
+            ash::ext::descriptor_indexing::NAME.to_string_lossy(),
+            ash::khr::device_group::NAME.to_string_lossy(),
+            ash::khr::dynamic_rendering::NAME.to_string_lossy(),
+            ash::khr::buffer_device_address::NAME.to_string_lossy(),
+        ]);
+
+        dbg!(&physical_device);
         let device = Arc::new(DeviceBuilder::new(physical_device, instance.clone()).build()?);
         let (graphics_queue_family, graphics_queue) = device.get_queue(QueueType::Graphics)?;
         let graphics_queue_family = graphics_queue_family as u32;
@@ -83,7 +96,6 @@ impl WreRenderer {
             swapchain_images: Vec::new(),
             swapchain_image_views: Vec::new(),
             graphics_queue,
-            graphics_queue_family,
             frames,
             current_frame: 0,
         };
@@ -145,6 +157,8 @@ impl WreRenderer {
         unsafe { self.device.reset_fences(&[frame_data.render_fence]) }?;
 
         let aquire_next_image_info = vk::AcquireNextImageInfoKHR::default()
+            .swapchain(*swapchain.as_ref())
+            .device_mask(1)
             .semaphore(frame_data.swapchain_semaphore)
             .timeout(1000000000);
 
@@ -201,6 +215,35 @@ impl WreRenderer {
         // Finalize the command buffer (we can no longer add commands, but it can now be executed)
         unsafe { self.device.end_command_buffer(cmd) }?;
 
+        let buffer_infos = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd)];
+        let wait_infos = [vk::SemaphoreSubmitInfo::default()
+            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT_KHR)
+            .semaphore(frame_data.swapchain_semaphore)];
+        let signal_infos = [vk::SemaphoreSubmitInfo::default()
+            .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+            .semaphore(frame_data.render_semaphore)];
+
+        let submit_info = vk::SubmitInfo2::default()
+            .command_buffer_infos(&buffer_infos)
+            .signal_semaphore_infos(&signal_infos)
+            .wait_semaphore_infos(&wait_infos);
+
+        unsafe {
+            self.device
+                .queue_submit2(self.graphics_queue, &[submit_info], frame_data.render_fence)
+        }?;
+
+        let wait_semaphores = [frame_data.render_semaphore];
+        let image_indices = [swapchain_image_index];
+        let swapchains = [*swapchain.as_ref()];
+
+        let present_info = vk::PresentInfoKHR::default()
+            .swapchains(&swapchains)
+            .wait_semaphores(&wait_semaphores)
+            .image_indices(&image_indices);
+
+        unsafe { swapchain.queue_present(self.graphics_queue, &present_info) }?;
+
         Ok(())
     }
 }
@@ -210,6 +253,12 @@ impl Drop for WreRenderer {
         for frame in &mut self.frames {
             unsafe {
                 self.device.destroy_command_pool(frame.pool, None);
+
+                //destroy sync objects
+                self.device.destroy_fence(frame.render_fence, None);
+                self.device
+                    .destroy_semaphore(frame.swapchain_semaphore, None);
+                self.device.destroy_semaphore(frame.render_semaphore, None);
             }
         }
 
@@ -276,17 +325,22 @@ fn create_transition_image_barrier(
         vk::ImageAspectFlags::COLOR
     };
 
-    let image_barrier = vk::ImageMemoryBarrier2::default()
+    let image_barriers = [vk::ImageMemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
         .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE | vk::AccessFlags2::MEMORY_READ)
         .old_layout(current_layout)
         .new_layout(new_layout)
-        .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(aspect_mask))
-        .image(image);
+        .subresource_range(
+            vk::ImageSubresourceRange::default()
+                .aspect_mask(aspect_mask)
+                .level_count(vk::REMAINING_MIP_LEVELS)
+                .base_mip_level(vk::REMAINING_ARRAY_LAYERS),
+        )
+        .image(image)];
 
-    let binding = [image_barrier];
-    let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&binding);
+    let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_barriers);
+
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }
